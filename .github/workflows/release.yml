@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2019
     steps:
       - uses: actions/checkout@v3
 
@@ -34,12 +34,23 @@ jobs:
           name: VoxLink-Windows
           path: ./binaries
 
-      - name: Create or Update Pre-Release
+      - name: Extract version
+        id: get_version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | awk -F '"' '{print $2}')
+          echo "VERSION=v$VERSION" >> $GITHUB_ENV
+
+      - name: Zip the executable
+        run: |
+          cd binaries
+          zip voxlink-windows.zip voxlink.exe
+          
+      - name: Create or Update Release
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest"
-          prerelease: true
-          title: "Latest VoxLink Build"
+          automatic_release_tag: "${{ env.VERSION }}"
+          prerelease: false
+          title: "VoxLink ${{ env.VERSION }}"
           files: |
-            ./binaries/voxlink.exe
+            ./binaries/voxlink-windows.zip
