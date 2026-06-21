@@ -12,3 +12,5 @@ pub mod webrtc;
 
 // Supabase REST APIs (Auth, Profiles, Storage)
 pub mod supabase;
+
+pub mod updater;

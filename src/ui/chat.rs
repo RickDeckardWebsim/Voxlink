@@ -18,6 +18,40 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
             render_sidebar(ui, state);
         });
 
+    // ── Update Banner ─────────────────────────────────────────────────────────
+    if let Some(ref version) = state.update_available_version {
+        egui::TopBottomPanel::top("update_banner")
+            .exact_size(40.0)
+            .frame(
+                Frame::default()
+                    .fill(Color32::from_rgb(45, 120, 60)) // Green banner
+                    .inner_margin(Margin::symmetric(16i8, 0i8)),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if state.update_in_progress {
+                        ui.spinner();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Downloading update...").color(Color32::WHITE).strong());
+                    } else if let Some(ref err) = state.update_error {
+                        ui.label(RichText::new(format!("Update failed: {}", err)).color(theme::RED_DANGER).strong());
+                    } else {
+                        let btn = ui.add(
+                            egui::Button::new(RichText::new("Update Now").color(Color32::WHITE).strong())
+                                .fill(theme::BLURPLE)
+                                .corner_radius(CornerRadius::same(4))
+                        );
+                        if btn.clicked() {
+                            state.update_in_progress = true;
+                            crate::net::updater::run_update(state.updater_tx.clone());
+                        }
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(format!("🚀 Version {} is available!", version)).color(Color32::WHITE).strong());
+                    }
+                });
+            });
+    }
+
     // ── 2. Channel header (top panel) ─────────────────────────────────────────
     egui::TopBottomPanel::top("channel_header")
         .exact_size(theme::CHANNEL_HEADER_HEIGHT)

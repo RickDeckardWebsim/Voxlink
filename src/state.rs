@@ -198,6 +198,14 @@ pub struct AppState {
     pub show_profile_modal: bool,
     pub profile_in_progress: bool,
     pub profile_error: Option<String>,
+    pub profile_upload_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+
+    // ── Updater ──
+    pub updater_tx: std::sync::mpsc::Sender<crate::net::updater::UpdaterEvent>,
+    pub updater_rx: std::sync::mpsc::Receiver<crate::net::updater::UpdaterEvent>,
+    pub update_available_version: Option<String>,
+    pub update_in_progress: bool,
+    pub update_error: Option<String>,
     pub profile_rx: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
 
     // ── Chat ──
@@ -226,6 +234,11 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         let session = Session::load();
+        let (updater_tx, updater_rx) = std::sync::mpsc::channel();
+        
+        // Kick off update check
+        crate::net::updater::check_for_updates(updater_tx.clone());
+        
         let mut state = Self {
             screen: if session.is_some() { Screen::Chat } else { Screen::Login },
             is_registering: false,
@@ -241,6 +254,12 @@ impl Default for AppState {
             show_profile_modal: false,
             profile_in_progress: false,
             profile_error: None,
+            profile_upload_rx: None,
+            updater_tx,
+            updater_rx,
+            update_available_version: None,
+            update_in_progress: false,
+            update_error: None,
             profile_rx: None,
             messages: Vec::new(),
             message_input: String::new(),
@@ -296,15 +315,35 @@ impl AppState {
     /// Drain all pending network events, applying them to state.
     /// Returns `true` if any events were processed (caller should repaint).
     pub fn process_net_events(&mut self) -> bool {
+        let mut did_work = false;
+        
         let events = self.poll_network_events();
-        if events.is_empty() {
-            return false;
+        if !events.is_empty() {
+            did_work = true;
+            for event in events {
+                self.apply_net_event(event);
+            }
+        }
+        
+        // Also poll updater events
+        while let Ok(event) = self.updater_rx.try_recv() {
+            did_work = true;
+            match event {
+                crate::net::updater::UpdaterEvent::UpdateAvailable(version) => {
+                    self.update_available_version = Some(version);
+                }
+                crate::net::updater::UpdaterEvent::UpdateFinished => {
+                    self.update_in_progress = false;
+                    // App should restart momentarily
+                }
+                crate::net::updater::UpdaterEvent::UpdateFailed(err) => {
+                    self.update_in_progress = false;
+                    self.update_error = Some(err);
+                }
+            }
         }
 
-        for event in events {
-            self.apply_net_event(event);
-        }
-        true
+        did_work
     }
 
     // apply_net_event is defined in app.rs to keep UI side-effects
