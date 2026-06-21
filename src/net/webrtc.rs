@@ -3,6 +3,8 @@ use std::net::SocketAddr;
 use std::time::Instant;
 use tokio::net::UdpSocket;
 use str0m::{Rtc, Event, Output, Input, Candidate};
+use str0m::media::{MediaKind, Direction, MediaTime};
+use crate::audio::{capture::start_capture, playback::start_playback};
 
 use crate::state::{NetEvent, UiCommand};
 
@@ -67,6 +69,13 @@ pub async fn run(
     let mut data_channel = None;
     let mut pending_offer = None;
 
+    let mut audio_mid = Some(rtc.sdp_api().add_media(MediaKind::Audio, Direction::SendRecv, None, None, None));
+    let mut rtp_counter = 0;
+    let mut mic_active = false;
+    
+    let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let mut speaker_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>> = None;
+
     loop {
         // 1. Drain str0m output
         while let Ok(output) = rtc.poll_output() {
@@ -78,6 +87,13 @@ pub async fn run(
                     match e {
                         Event::Connected => {
                             log::info!("[webrtc] P2P Connected!");
+                            // Start audio streams
+                            if let Ok(()) = start_capture(mic_tx.clone()) {
+                                log::info!("[webrtc] Audio capture running.");
+                            }
+                            if let Ok(tx) = start_playback() {
+                                speaker_tx = Some(tx);
+                            }
                         }
                         Event::ChannelOpen(id, name) => {
                             log::info!("[webrtc] Data channel opened: {}", name);
@@ -91,6 +107,11 @@ pub async fn run(
                                     content: msg,
                                 });
                                 ctx.request_repaint();
+                            }
+                        }
+                        Event::MediaData(data) => {
+                            if let Some(tx) = &speaker_tx {
+                                let _ = tx.send(data.data.to_vec());
                             }
                         }
                         _ => {}
@@ -124,6 +145,25 @@ pub async fn run(
                         };
                         let _ = rtc.handle_input(Input::Receive(Instant::now(), receive));
                     }
+                }
+            }
+
+            mic_packet = mic_rx.recv() => {
+                if let Some(packet) = mic_packet {
+                    if mic_active {
+                        if let Some(mid) = audio_mid {
+                            if let Some(writer) = rtc.writer(mid) {
+                                let pt = writer.payload_params().next().map(|p| p.pt());
+                                if let Some(pt) = pt {
+                                    let freq: std::num::NonZeroU32 = std::num::NonZeroU32::new(48000).unwrap();
+                                    let time = MediaTime::new(rtp_counter, freq.into());
+                                    let _ = writer.write(pt, Instant::now(), time, packet);
+                                }
+                            }
+                        }
+                    }
+                    // Always increment counter even if muted to maintain RTP timing
+                    rtp_counter += 960; // 20ms at 48kHz
                 }
             }
 
@@ -206,6 +246,10 @@ pub async fn run(
                             } else {
                                 log::warn!("[webrtc] No data channel open to send message");
                             }
+                        }
+                        UiCommand::ToggleVoice(active) => {
+                            mic_active = active;
+                            log::info!("[webrtc] Voice active: {}", active);
                         }
                         _ => {}
                     }

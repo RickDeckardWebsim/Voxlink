@@ -109,6 +109,9 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             ui.vertical(|ui| {
                 if components::voice_toggle_button(ui, state.voice_active) {
                     state.voice_active = !state.voice_active;
+                    if let Some(tx) = &state.cmd_tx {
+                        let _ = tx.send(crate::state::UiCommand::ToggleVoice(state.voice_active));
+                    }
                     state.push_system(if state.voice_active {
                         "🎙  Voice connected (Phase 4 will route audio P2P)"
                     } else {

@@ -51,9 +51,10 @@ str0m             = { version = "0.20.0", default-features = false, features = [
 # Phase 3 additions (uncomment when implementing WebRTC):
 # str0m = "0.20"
 #
-# Phase 4 additions (uncomment when implementing voice):
-# cpal  = "0.18"
-# opus  = { version = "0.3", features = ["vendored"] }
+# Phase 4 additions:
+cpal    = "0.15.3"
+opus    = "0.3.1"
+ringbuf = "0.4.7"
 # ----------------------------------------------------------------------------------
 
 [profile.release]
