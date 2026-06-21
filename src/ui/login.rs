@@ -1,21 +1,45 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// ui/login.rs — Login / username entry screen  (egui 0.34 compatible)
+// ui/login.rs — Email/Password Login & Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
 use egui::{Color32, CornerRadius, Frame, Key, Margin, RichText, Vec2};
+use std::sync::mpsc;
+use std::thread;
 
-use crate::state::{AppState, Screen};
+use crate::state::{AppState, Screen, Session};
+use crate::net::supabase;
 use super::{components, theme};
 
-#[allow(deprecated)] // egui 0.34: CentralPanel::show + allocate_new_ui still functional
-#[allow(dead_code)] // used in Phase 3+
 pub fn render(ctx: &egui::Context, state: &mut AppState) {
+    // Poll for auth result
+    if let Some(rx) = &state.auth_rx {
+        if let Ok(result) = rx.try_recv() {
+            state.auth_in_progress = false;
+            state.auth_rx = None;
+            
+            match result {
+                Ok(session) => {
+                    session.save(); // Persist to disk
+                    state.session = Some(session.clone());
+                    state.username = session.username.clone();
+                    state.push_system(format!("Welcome {}, connecting to signaling…", session.username));
+                    state.screen = Screen::Chat;
+                    state.peers.clear();
+                    state.needs_connect = true; // triggers signaling spawn
+                }
+                Err(e) => {
+                    state.auth_error = Some(e);
+                }
+            }
+        }
+    }
+
     egui::CentralPanel::default()
         .frame(Frame::default().fill(theme::DARK_BG))
         .show(ctx, |ui| {
             let available = ui.max_rect();
             let card_w = 420.0_f32;
-            let card_h = 400.0_f32;
+            let card_h = if state.is_registering { 540.0_f32 } else { 480.0_f32 };
             let card_rect = egui::Rect::from_center_size(
                 available.center(),
                 Vec2::new(card_w, card_h),
@@ -34,7 +58,6 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
                 Color32::from_rgba_premultiplied(0x3b, 0xa5, 0x5d, 0x10),
             );
 
-            // Use allocate_new_ui (0.34 API) instead of deprecated allocate_ui_at_rect
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(card_rect), |ui| {
                 Frame::default()
                     .fill(theme::SIDEBAR_BG)
@@ -61,80 +84,151 @@ fn login_card_content(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSta
         draw_logo(ui.painter(), logo_rect.center());
 
         ui.add_space(16.0);
-        ui.label(RichText::new("VoxLink").size(26.0).color(Color32::WHITE).strong());
+        ui.label(RichText::new(if state.is_registering { "Create an Account" } else { "Welcome Back" }).size(26.0).color(Color32::WHITE).strong());
         ui.label(
-            RichText::new("Private P2P voice & text — zero servers, zero cost")
+            RichText::new("Private P2P voice & text — zero cost")
                 .size(13.0)
                 .color(theme::TEXT_MUTED),
         );
 
         ui.add_space(28.0);
+    });
 
-        // Username label
-        ui.label(
-            RichText::new("USERNAME").size(11.0).color(theme::TEXT_MUTED).strong(),
-        );
+    ui.vertical(|ui| {
+        let mut enter_pressed = false;
+
+        // Email field
+        ui.label(RichText::new("EMAIL").size(11.0).color(theme::TEXT_MUTED).strong());
         ui.add_space(4.0);
-
-        let field_id = egui::Id::new("login_username_field");
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut state.username_input)
-                .id(field_id)
-                .hint_text("e.g. Alice")
+        let email_id = egui::Id::new("login_email_field");
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut state.email_input)
+                .id(email_id)
+                .hint_text("you@example.com")
                 .desired_width(f32::INFINITY)
                 .font(egui::TextStyle::Body)
                 .margin(egui::Margin::symmetric(12i8, 8i8)),
         );
-
-        // Auto-focus on first frame
-        if state.focus_username {
-            ctx.memory_mut(|m| m.request_focus(field_id));
-            state.focus_username = false;
+        if state.focus_input {
+            ctx.memory_mut(|m| m.request_focus(email_id));
+            state.focus_input = false;
         }
+        if resp.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) { enter_pressed = true; }
+        ui.add_space(12.0);
 
-        ui.add_space(8.0);
-
-        let username = state.username_input.trim().to_string();
-        let is_valid = !username.is_empty() && username.len() <= 32;
-
-        if !state.username_input.is_empty() && !is_valid {
-            ui.label(
-                RichText::new("Username must be 1–32 characters")
-                    .size(12.0)
-                    .color(theme::RED_DANGER),
-            );
+        // Username field (only if registering)
+        if state.is_registering {
+            ui.label(RichText::new("USERNAME").size(11.0).color(theme::TEXT_MUTED).strong());
             ui.add_space(4.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut state.username_input)
+                    .hint_text("Display Name")
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Body)
+                    .margin(egui::Margin::symmetric(12i8, 8i8)),
+            );
+            if resp.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) { enter_pressed = true; }
+            ui.add_space(12.0);
         }
 
+        // Password field
+        ui.label(RichText::new("PASSWORD").size(11.0).color(theme::TEXT_MUTED).strong());
         ui.add_space(4.0);
-        ui.add_enabled_ui(is_valid, |ui| {
-            let enter_pressed = response.lost_focus()
-                && ctx.input(|i| i.key_pressed(Key::Enter));
-
-            if components::accent_button(ui, "Enter VoxLink ✨").clicked() || enter_pressed {
-                if is_valid {
-                    commit_login(state, username);
-                }
-            }
-        });
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut state.password_input)
+                .password(true)
+                .hint_text("••••••••")
+                .desired_width(f32::INFINITY)
+                .font(egui::TextStyle::Body)
+                .margin(egui::Margin::symmetric(12i8, 8i8)),
+        );
+        if resp.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) { enter_pressed = true; }
 
         ui.add_space(16.0);
-        ui.label(
-            RichText::new(
-                "Your name is only shared with peers you connect to.\nNo account required.",
-            )
-            .size(11.0)
-            .color(theme::TEXT_MUTED),
-        );
+
+        // Error message
+        if let Some(err) = &state.auth_error {
+            ui.label(RichText::new(err).color(theme::RED_DANGER).size(13.0));
+            ui.add_space(8.0);
+        }
+
+        ui.vertical_centered(|ui| {
+            if state.auth_in_progress {
+                ui.spinner();
+            } else {
+                let btn_text = if state.is_registering { "Register ✨" } else { "Login 🚀" };
+                let is_valid = !state.email_input.is_empty() && !state.password_input.is_empty() && (!state.is_registering || !state.username_input.is_empty());
+                
+                ui.add_enabled_ui(is_valid, |ui| {
+                    if components::accent_button(ui, btn_text).clicked() || (is_valid && enter_pressed) {
+                        commit_auth(state, ctx);
+                    }
+                });
+            }
+
+            ui.add_space(16.0);
+            
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new(if state.is_registering { "Already have an account?" } else { "Need an account?" }).color(theme::TEXT_MUTED).size(12.0));
+                
+                if ui.link(RichText::new(if state.is_registering { "Login" } else { "Register" }).color(theme::BLURPLE).size(12.0)).clicked() {
+                    state.is_registering = !state.is_registering;
+                    state.auth_error = None;
+                }
+            });
+        });
     });
 }
 
-fn commit_login(state: &mut AppState, username: String) {
-    state.username = username.clone();
-    state.push_system(format!("You joined as {}. Connecting to signaling…", username));
-    state.screen = Screen::Chat;
-    state.peers.clear();
-    state.needs_connect = true; // triggers signaling spawn in app.rs
+fn commit_auth(state: &mut AppState, ctx: &egui::Context) {
+    state.auth_in_progress = true;
+    state.auth_error = None;
+
+    let email = state.email_input.clone();
+    let password = state.password_input.clone();
+    let username = state.username_input.clone();
+    let is_registering = state.is_registering;
+
+    let (tx, rx) = mpsc::channel();
+    state.auth_rx = Some(rx);
+    let ctx_clone = ctx.clone();
+
+    thread::spawn(move || {
+        let result = if is_registering {
+            supabase::sign_up(&email, &password, &username)
+        } else {
+            supabase::sign_in(&email, &password)
+        };
+
+        match result {
+            Ok(auth_res) => {
+                // If it's sign in, we also need to fetch their profile to get their username and avatar
+                let (uname, avatar) = if !is_registering {
+                    match supabase::get_profile(&auth_res.user.id, &auth_res.access_token) {
+                        Ok(prof) => (prof.username, prof.avatar_url),
+                        Err(_) => (email.clone(), None) // Fallback if no profile
+                    }
+                } else {
+                    (username, None)
+                };
+
+                let session = Session {
+                    access_token: auth_res.access_token,
+                    refresh_token: auth_res.refresh_token,
+                    user_id: auth_res.user.id,
+                    email,
+                    username: uname,
+                    avatar_url: avatar,
+                };
+                let _ = tx.send(Ok(session));
+            }
+            Err(e) => {
+                let _ = tx.send(Err(e.to_string()));
+            }
+        }
+        ctx_clone.request_repaint();
+    });
 }
 
 fn draw_logo(painter: &egui::Painter, center: egui::Pos2) {

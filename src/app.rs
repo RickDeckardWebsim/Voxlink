@@ -114,6 +114,7 @@ impl AppState {
                 if !self.peers.iter().any(|p| p.username == username) {
                     self.peers.push(PeerInfo {
                         username: username.clone(),
+                        avatar_url: None,
                         voice_active: false,
                         peer_id: None,
                     });

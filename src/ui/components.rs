@@ -9,21 +9,52 @@ use super::theme;
 
 // ── Avatar ────────────────────────────────────────────────────────────────────
 
-pub fn draw_avatar(ui: &mut Ui, username: &str, size: f32) -> Rect {
+pub fn draw_avatar(ui: &mut Ui, username: &str, avatar_url: Option<&str>, size: f32) -> Rect {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        let color = theme::avatar_color(username);
-        painter.circle_filled(rect.center(), size / 2.0, color);
-        let letter = username.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?');
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            letter.to_string(),
-            FontId::proportional(size * 0.44),
-            Color32::WHITE,
-        );
+        let mut drawn_image = false;
+        
+        if let Some(url) = avatar_url {
+            if let Some(tex) = super::image_loader::get_avatar_texture(ui.ctx(), url) {
+                let mut mesh = egui::Mesh::with_texture(tex.id());
+                let color = Color32::WHITE;
+                let center = rect.center();
+                let r = size / 2.0;
+                let uv_r = 0.5;
+                let uv_center = Pos2::new(0.5, 0.5);
+                
+                let n = 32;
+                for i in 0..n {
+                    let a0 = i as f32 * std::f32::consts::TAU / n as f32;
+                    let a1 = (i + 1) as f32 * std::f32::consts::TAU / n as f32;
+                    let p0 = center + Vec2::new(a0.cos(), a0.sin()) * r;
+                    let p1 = center + Vec2::new(a1.cos(), a1.sin()) * r;
+                    let uv0 = uv_center + Vec2::new(a0.cos(), a0.sin()) * uv_r;
+                    let uv1 = uv_center + Vec2::new(a1.cos(), a1.sin()) * uv_r;
+                    mesh.add_triangle(2, 0, 1);
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p0, uv: uv0, color });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: uv1, color });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: center, uv: uv_center, color });
+                }
+                ui.painter().add(mesh);
+                drawn_image = true;
+            }
+        }
+        
+        if !drawn_image {
+            let painter = ui.painter();
+            let color = theme::avatar_color(username);
+            painter.circle_filled(rect.center(), size / 2.0, color);
+            let letter = username.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?');
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                letter.to_string(),
+                FontId::proportional(size * 0.44),
+                Color32::WHITE,
+            );
+        }
     }
 
     rect
@@ -84,7 +115,9 @@ fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool) {
         ui.add_space(12.0);
 
         if show_header {
-            draw_avatar(ui, &msg.author, theme::AVATAR_SIZE);
+            // In a real app we'd fetch the peer's avatar from state, but ChatMessage doesn't store avatar_url currently.
+            // Let's modify components.rs later if needed, but for now fallback to None for chat messages
+            draw_avatar(ui, &msg.author, None, theme::AVATAR_SIZE);
             ui.add_space(8.0);
         } else {
             ui.add_space(theme::AVATAR_SIZE + 8.0);
@@ -141,14 +174,14 @@ pub fn ghost_button(ui: &mut Ui, label: &str) -> Response {
 
 // ── Sidebar User Row ──────────────────────────────────────────────────────────
 
-pub fn sidebar_user_row(ui: &mut Ui, username: &str, is_self: bool, voice_active: bool) {
+pub fn sidebar_user_row(ui: &mut Ui, username: &str, avatar_url: Option<&str>, is_self: bool, voice_active: bool) {
     egui::Frame::default()
         .fill(Color32::TRANSPARENT)
         .corner_radius(CornerRadius::same(6u8))
         .inner_margin(egui::Margin::symmetric(8i8, 4i8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let avatar_rect = draw_avatar(ui, username, 28.0);
+                let avatar_rect = draw_avatar(ui, username, avatar_url, 28.0);
                 let dot_center  = avatar_rect.right_bottom() + Vec2::new(-2.0, -2.0);
                 draw_status_dot(ui.painter(), dot_center, 5.0, theme::GREEN_ONLINE);
                 ui.add_space(4.0);

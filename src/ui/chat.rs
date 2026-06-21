@@ -37,6 +37,8 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
         .show(ctx, |ui| {
             render_message_area(ctx, ui, state);
         });
+
+    crate::ui::profile::render_modal(ctx, state);
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -86,12 +88,13 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             sidebar_section_header(ui, &format!("ONLINE — {}", online));
 
             ui.add_space(2.0);
-            components::sidebar_user_row(ui, &state.username, true, state.voice_active);
+            let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref());
+            components::sidebar_user_row(ui, &state.username, avatar_url, true, state.voice_active);
 
             let peers = state.peers.clone();
             for peer in &peers {
                 ui.add_space(2.0);
-                components::sidebar_user_row(ui, &peer.username, false, peer.voice_active);
+                components::sidebar_user_row(ui, &peer.username, peer.avatar_url.as_deref(), false, peer.voice_active);
             }
             ui.add_space(12.0);
         });
@@ -121,8 +124,9 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                     });
                 }
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    components::draw_avatar(ui, &state.username, 28.0);
+                let resp = ui.horizontal(|ui| {
+                    let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref());
+                    components::draw_avatar(ui, &state.username, avatar_url, 28.0);
                     ui.add_space(6.0);
                     ui.vertical(|ui| {
                         ui.label(
@@ -134,7 +138,14 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                                 .color(theme::TEXT_MUTED),
                         );
                     });
-                });
+                }).response;
+                
+                if ui.interact(resp.rect, egui::Id::new("user_row_click"), egui::Sense::click()).clicked() {
+                    state.show_profile_modal = true;
+                }
+                if ui.rect_contains_pointer(resp.rect) {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
             });
         });
 }

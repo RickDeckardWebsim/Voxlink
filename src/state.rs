@@ -8,6 +8,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use serde::{Deserialize, Serialize};
+use directories::ProjectDirs;
+use std::fs;
+use std::path::PathBuf;
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 
@@ -81,11 +84,54 @@ impl ChatMessage {
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
     pub username: String,
+    pub avatar_url: Option<String>,
     /// Whether this peer has their microphone active (Phase 4).
     pub voice_active: bool,
     /// WebRTC peer ID assigned at connection (Phase 3).
     #[allow(dead_code)]
     pub peer_id: Option<String>,
+}
+
+// ── Session ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user_id: String,
+    pub email: String,
+    pub username: String,
+    pub avatar_url: Option<String>,
+}
+
+impl Session {
+    pub fn load() -> Option<Self> {
+        if let Some(proj_dirs) = ProjectDirs::from("com", "VoxLink", "VoxLinkApp") {
+            let path = proj_dirs.config_dir().join("session.json");
+            if let Ok(content) = fs::read_to_string(&path) {
+                return serde_json::from_str(&content).ok();
+            }
+        }
+        None
+    }
+
+    pub fn save(&self) {
+        if let Some(proj_dirs) = ProjectDirs::from("com", "VoxLink", "VoxLinkApp") {
+            let dir = proj_dirs.config_dir();
+            let _ = fs::create_dir_all(dir);
+            let path = dir.join("session.json");
+            if let Ok(content) = serde_json::to_string_pretty(self) {
+                let _ = fs::write(path, content);
+            }
+        }
+    }
+
+    pub fn clear() {
+        if let Some(proj_dirs) = ProjectDirs::from("com", "VoxLink", "VoxLinkApp") {
+            let path = proj_dirs.config_dir().join("session.json");
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 // ── Network event bridge (Phase 2+) ──────────────────────────────────────────
@@ -133,12 +179,26 @@ pub struct AppState {
     pub screen: Screen,
 
     // ── Login ──
+    pub is_registering: bool,
+    pub email_input: String,
+    pub password_input: String,
     pub username_input: String,
-    /// Set to true on the very first frame to auto-focus the username field.
-    pub focus_username: bool,
+    pub auth_error: Option<String>,
+    pub auth_in_progress: bool,
+    pub auth_rx: Option<std::sync::mpsc::Receiver<Result<Session, String>>>,
+
+    /// Set to true on the very first frame to auto-focus.
+    pub focus_input: bool,
 
     // ── Session ──
-    pub username: String,
+    pub session: Option<Session>,
+    pub username: String, // Kept for quick access, mirrors session.username when logged in
+
+    // ── Profile Modal ──
+    pub show_profile_modal: bool,
+    pub profile_in_progress: bool,
+    pub profile_error: Option<String>,
+    pub profile_rx: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
 
     // ── Chat ──
     pub messages: Vec<ChatMessage>,
@@ -165,11 +225,23 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
+        let session = Session::load();
         let mut state = Self {
-            screen: Screen::Login,
+            screen: if session.is_some() { Screen::Chat } else { Screen::Login },
+            is_registering: false,
+            email_input: String::new(),
+            password_input: String::new(),
             username_input: String::new(),
-            focus_username: true,
-            username: String::new(),
+            auth_error: None,
+            auth_in_progress: false,
+            auth_rx: None,
+            focus_input: true,
+            username: session.as_ref().map(|s| s.username.clone()).unwrap_or_default(),
+            session: session.clone(),
+            show_profile_modal: false,
+            profile_in_progress: false,
+            profile_error: None,
+            profile_rx: None,
             messages: Vec::new(),
             message_input: String::new(),
             next_message_id: 0,
@@ -181,9 +253,12 @@ impl Default for AppState {
             cmd_tx: None,
         };
 
-        state.push_system(
-            "Welcome to VoxLink! Enter a username and press Enter to connect.",
-        );
+        if state.session.is_some() {
+            state.push_system(format!("Welcome back, {}! Connecting to signaling...", state.username));
+            state.needs_connect = true;
+        } else {
+            state.push_system("Welcome to VoxLink! Please log in to connect.");
+        }
         state
     }
 }
