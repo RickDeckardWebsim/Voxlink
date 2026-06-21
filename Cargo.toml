@@ -68,3 +68,6 @@ lto           = "thin"
 codegen-units = 1
 strip         = true      # Strip debug symbols → smaller binary
 panic         = "abort"   # No unwinding runtime overhead
+
+[build-dependencies]
+winres = "0.1.12"
