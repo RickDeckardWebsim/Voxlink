@@ -1,0 +1,64 @@
+[package]
+name        = "voxlink"
+version     = "0.1.0"
+edition     = "2021"
+description = "A hyper-optimized, $0-cost P2P voice and text chat app"
+authors     = ["VoxLink Contributors"]
+
+# ----------------------------------------------------------------------------------
+# Core dependencies (shared between native and Wasm targets)
+# ----------------------------------------------------------------------------------
+[dependencies]
+# UI framework — egui rendered via wgpu (Vulkan/Metal/DX12/WebGPU)
+eframe = { version = "0.34", default-features = false, features = [
+    "accesskit",      # Platform-native accessibility tree
+    "default_fonts",  # Bundles egui's built-in font atlas
+    "wgpu",           # Modern GPU backend (replaces glow)
+    "persistence",    # Saves/restores app state via cc.storage
+] }
+egui = "0.34"
+
+# Serialization — used for signaling messages in Phase 2+
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging facade
+log = "0.4"
+rand = "0.10.1"
+
+
+# ----------------------------------------------------------------------------------
+# Native-only dependencies
+# (These blocks are excluded when compiling to wasm32-unknown-unknown)
+# ----------------------------------------------------------------------------------
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger        = "0.11"
+tokio             = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+futures-util      = "0.3"
+uuid              = { version = "1", features = ["v4"] }
+str0m             = { version = "0.20.0", default-features = false, features = ["rust-crypto"] }
+
+# ----------------------------------------------------------------------------------
+# Phase 2 additions (uncomment when implementing signaling):
+# tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+# futures-util      = "0.3"
+# uuid              = { version = "1", features = ["v4"] }
+#
+# Phase 3 additions (uncomment when implementing WebRTC):
+# str0m = "0.20"
+#
+# Phase 4 additions (uncomment when implementing voice):
+# cpal  = "0.18"
+# opus  = { version = "0.3", features = ["vendored"] }
+# ----------------------------------------------------------------------------------
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = true      # Strip debug symbols → smaller binary
+panic         = "abort"   # No unwinding runtime overhead
