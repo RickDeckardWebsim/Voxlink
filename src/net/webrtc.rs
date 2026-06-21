@@ -69,7 +69,7 @@ pub async fn run(
     let mut data_channel = None;
     let mut pending_offer = None;
 
-    let mut audio_mid = Some(rtc.sdp_api().add_media(MediaKind::Audio, Direction::SendRecv, None, None, None));
+    let audio_mid = Some(rtc.sdp_api().add_media(MediaKind::Audio, Direction::SendRecv, None, None, None));
     let mut rtp_counter = 0;
     let mut mic_active = false;
     
@@ -185,7 +185,7 @@ pub async fn run(
                                 };
                                 let _ch = rtc.direct_api().create_data_channel(config);
                                 
-                                let mut change = rtc.sdp_api();
+                                let change = rtc.sdp_api();
                                 if let Some((offer, pending)) = change.apply() {
                                     pending_offer = Some(pending);
                                     let sdp = serde_json::to_string(&offer).unwrap();

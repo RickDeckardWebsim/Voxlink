@@ -42,8 +42,6 @@ impl VoxLinkApp {
     /// then stores the receiver/sender ends in AppState for UI integration.
     #[cfg(not(target_arch = "wasm32"))]
     fn spawn_signaling(&mut self, ctx: egui::Context) {
-        use std::sync::mpsc;
-
         let (net_tx, net_rx) = std::sync::mpsc::channel();
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
 

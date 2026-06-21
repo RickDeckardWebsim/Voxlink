@@ -1,6 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use opus::{Encoder, Application, Channels};
 

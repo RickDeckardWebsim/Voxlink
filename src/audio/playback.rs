@@ -1,9 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{HeapRb, traits::{Consumer as _, Producer as _, Split, Observer}};
-use std::sync::{Arc, Mutex};
 use opus::{Decoder, Channels};
-use std::thread;
 
 /// Starts the audio playback stream and a dedicated decoder thread.
 /// Returns the sender where Opus packets should be sent.
