@@ -1,11 +1,11 @@
 @echo off
-title VoxLink Updater + Launcher
+title VoxLink Updater
 echo ╔══════════════════════════════════════╗
-echo ║     VoxLink Update and Run v1.0      ║
+echo ║        VoxLink Updater v1.0          ║
 echo ╚══════════════════════════════════════╝
 echo.
 
-echo [1/3] Checking for updates...
+echo [1/2] Checking for updates...
 git pull
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -14,7 +14,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo [2/3] Building VoxLink (Release)...
+echo [2/2] Building VoxLink (Release)...
 cargo build --bin voxlink --release
 
 if %ERRORLEVEL% neq 0 (
@@ -27,6 +27,8 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo [3/3] Launching VoxLink...
-start "" "target\release\voxlink.exe"
-exit
+echo ════════════════════════════════════════
+echo   Update complete!
+echo   Run VoxLink from: target\release\voxlink.exe
+echo ════════════════════════════════════════
+pause

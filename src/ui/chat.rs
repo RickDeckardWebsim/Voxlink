@@ -66,10 +66,13 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             });
         });
 
-    // Scrollable user / channel list
+    // Scrollable user / channel list — reserve space for bottom control bar
+    let bottom_h = 96.0;
+    let scroll_max = (ui.available_height() - bottom_h).max(40.0);
     ScrollArea::vertical()
         .id_salt("sidebar_scroll")
         .auto_shrink([false, false])
+        .max_height(scroll_max)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.add_space(8.0);
@@ -93,8 +96,7 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             ui.add_space(12.0);
         });
 
-    // Bottom control bar — pinned to the bottom of the sidebar
-    let bottom_h = 88.0;
+    // Push bottom bar to the very bottom
     let remaining = ui.available_height() - bottom_h;
     if remaining > 0.0 {
         ui.add_space(remaining);
@@ -113,7 +115,7 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                         let _ = tx.send(crate::state::UiCommand::ToggleVoice(state.voice_active));
                     }
                     state.push_system(if state.voice_active {
-                        "🎙  Voice connected (Phase 4 will route audio P2P)"
+                        "🎙  Voice connected — streaming audio P2P"
                     } else {
                         "🔇  Voice disconnected."
                     });
