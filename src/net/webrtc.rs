@@ -171,11 +171,15 @@ pub async fn run(
                 if let Some(msg) = sig {
                     match msg {
                         SignalingMsg::PeerJoined(peer) => {
-                            log::info!("[webrtc] Peer {} joined", peer);
-                            active_peer = Some(peer.clone());
-                            // If our username is lexicographically smaller, we initiate.
-                            if username < peer {
-                                log::info!("[webrtc] Initiating WebRTC offer to {}", peer);
+                            if peer == username {
+                                log::info!("[webrtc] We joined successfully. Broadcasting presence.");
+                                let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastPeerJoin);
+                            } else {
+                                log::info!("[webrtc] Peer {} joined", peer);
+                                active_peer = Some(peer.clone());
+                                // If our username is lexicographically smaller, we initiate.
+                                if username < peer {
+                                    log::info!("[webrtc] Initiating WebRTC offer to {}", peer);
                                 let config = str0m::channel::ChannelConfig {
                                     label: "chat".to_string(),
                                     ordered: true,
@@ -190,6 +194,7 @@ pub async fn run(
                                     pending_offer = Some(pending);
                                     let sdp = serde_json::to_string(&offer).unwrap();
                                     let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::SendOffer { to: peer, sdp });
+                                }
                                 }
                             }
                         }

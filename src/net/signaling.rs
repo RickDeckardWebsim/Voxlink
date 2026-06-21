@@ -17,6 +17,7 @@ const HEARTBEAT_S: u64 = 25;
 pub enum SigCmd {
     SendOffer { to: String, sdp: String },
     SendAnswer { to: String, sdp: String },
+    BroadcastPeerJoin,
     Disconnect,
 }
 
@@ -103,6 +104,13 @@ async fn connect_and_run(
                 if let Some(cmd) = cmd_opt {
                     match cmd {
                         SigCmd::Disconnect => return Ok(true),
+                        SigCmd::BroadcastPeerJoin => {
+                            let topic = format!("realtime:{}", CHANNEL);
+                            let broadcast = make_broadcast(&topic, "peer_join", json!({
+                                "from": username,
+                            }));
+                            send_text(&mut ws_stream, &broadcast).await?;
+                        }
                         SigCmd::SendOffer { to, sdp } => {
                             let topic = format!("realtime:{}", CHANNEL);
                             let broadcast = make_broadcast(&topic, "sdp_offer", json!({
@@ -148,8 +156,12 @@ fn handle_incoming(
                 let _ = net_tx.send(NetEvent::Connected);
                 ctx.request_repaint();
                 
-                // Broadcast presence join
-                let _ = webrtc_tx.send(SignalingMsg::PeerJoined(username.to_string())); // Trigger self check or not, handled by webrtc
+                // Broadcast presence join to other users in the channel
+                // webrtc_tx doesn't need our own name, we need to send a SigCmd back to the loop.
+                // We will rely on the caller to send SigCmd::BroadcastPeerJoin.
+                // Wait, handle_incoming can't send SigCmd directly unless we pass sig_cmd_tx!
+                // Let's just pass webrtc_tx the command to ask the main thread to broadcast.
+                let _ = webrtc_tx.send(SignalingMsg::PeerJoined(username.to_string())); // Trigger self check
             }
         }
         "broadcast" => {

@@ -28,7 +28,7 @@ pub struct Profile {
 
 pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthResponse> {
     let client = Client::new();
-    let url = format!("{}/auth/v1/signup", BASE_URL);
+    let url = format!("{}/auth/v1/signup?apikey={}", BASE_URL, ANON_KEY);
     
     // 1. Sign up user
     let res = client.post(&url)
@@ -103,7 +103,7 @@ pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthRespon
 
 pub fn sign_in(email: &str, password: &str) -> Result<AuthResponse> {
     let client = Client::new();
-    let url = format!("{}/auth/v1/token?grant_type=password", BASE_URL);
+    let url = format!("{}/auth/v1/token?grant_type=password&apikey={}", BASE_URL, ANON_KEY);
     
     let res = client.post(&url)
         .header("apikey", ANON_KEY)
@@ -139,7 +139,7 @@ pub fn get_profile(user_id: &str, access_token: &str) -> Result<Profile> {
 
 pub fn update_profile(user_id: &str, access_token: &str, username: &str, avatar_url: Option<&str>) -> Result<()> {
     let client = Client::new();
-    let url = format!("{}/rest/v1/profiles?id=eq.{}", BASE_URL, user_id);
+    let url = format!("{}/rest/v1/profiles?id=eq.{}&apikey={}", BASE_URL, user_id, ANON_KEY);
     
     let mut body = json!({
         "username": username,
@@ -164,7 +164,7 @@ pub fn update_profile(user_id: &str, access_token: &str, username: &str, avatar_
 pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &str) -> Result<String> {
     let client = Client::new();
     let filename = format!("{}_avatar.{}", user_id, ext);
-    let url = format!("{}/storage/v1/object/avatars/{}", BASE_URL, filename);
+    let url = format!("{}/storage/v1/object/avatars/{}?apikey={}", BASE_URL, filename, ANON_KEY);
     
     let content_type = match ext {
         "png" => "image/png",
@@ -188,15 +188,9 @@ pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &st
         .send()?;
         
     if !res.status().is_success() {
-        // If POST fails, try PUT
-        let res2 = client.put(&url)
-            .header("apikey", ANON_KEY)
-            .header("Authorization", format!("Bearer {}", access_token))
-            .header("Content-Type", content_type)
-            .header("x-upsert", "true")
-            .body(bytes.clone())
-            .send()?;
-        res2.error_for_status()?;
+        let status = res.status();
+        let error_body = res.text().unwrap_or_default();
+        return Err(anyhow::anyhow!("Upload failed: {} - {}", status, error_body));
     }
         
     let public_url = format!("{}/storage/v1/object/public/avatars/{}", BASE_URL, filename);
