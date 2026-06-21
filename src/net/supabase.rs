@@ -41,17 +41,58 @@ pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthRespon
         .send()?
         .error_for_status()?;
         
-    let auth_res: AuthResponse = res.json()?;
+    let text = res.text()?;
+    
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    
+    let mut access_token = String::new();
+    let mut refresh_token = String::new();
+    let mut user_id = String::new();
+    let mut user_email = String::new();
+    
+    if let Some(session_token) = parsed.get("access_token").and_then(|v| v.as_str()) {
+        access_token = session_token.to_string();
+        refresh_token = parsed.get("refresh_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if let Some(user_obj) = parsed.get("user") {
+            user_id = user_obj.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            user_email = user_obj.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        }
+    } else {
+        // It's just a User object (Email confirmation required)
+        user_id = parsed.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        user_email = parsed.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    }
+    
+    if user_id.is_empty() {
+        return Err(anyhow::anyhow!("Unexpected response from Supabase Auth: {}", text));
+    }
+    
+    let auth_res = AuthResponse {
+        access_token: access_token.clone(),
+        refresh_token,
+        user: User {
+            id: user_id.clone(),
+            email: user_email,
+        }
+    };
+    
+    // If we didn't get an access token, we can't insert into profiles yet because RLS requires auth.
+    // BUT wait, if email confirmations are required, they can't log in immediately!
+    // We should return an error asking them to confirm their email, OR if we have a service key we could bypass it.
+    // If access_token is empty, let's just return an error to the UI telling them to check their email.
+    if access_token.is_empty() {
+        return Err(anyhow::anyhow!("Please check your email to confirm your account before logging in."));
+    }
     
     // 2. Insert into profiles table
     let profiles_url = format!("{}/rest/v1/profiles", BASE_URL);
     client.post(&profiles_url)
         .header("apikey", ANON_KEY)
-        .header("Authorization", format!("Bearer {}", auth_res.access_token))
+        .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
         .header("Prefer", "return=minimal")
         .json(&json!({
-            "id": auth_res.user.id,
+            "id": user_id,
             "username": username,
         }))
         .send()?
