@@ -65,7 +65,7 @@ pub async fn run(
     ));
 
     let mut buf = vec![0u8; 2000];
-    let mut active_peer: Option<String> = None;
+    let mut known_peers = std::collections::HashSet::new();
     let mut data_channel = None;
     let mut pending_offer = None;
 
@@ -101,7 +101,7 @@ pub async fn run(
                         }
                         Event::ChannelData(data) => {
                             if let Ok(msg) = String::from_utf8(data.data) {
-                                let from = active_peer.clone().unwrap_or_else(|| "Peer".to_string());
+                                let from = "Peer".to_string(); // we can't easily know who this is without data channel tracking, but we don't use this anymore anyway
                                 let _ = net_tx.send(NetEvent::MessageReceived {
                                     from,
                                     content: msg,
@@ -175,9 +175,9 @@ pub async fn run(
                                 log::info!("[webrtc] We joined successfully. Broadcasting presence.");
                                 let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastPeerJoin);
                             } else {
-                                if Some(&peer) != active_peer.as_ref() {
+                                if !known_peers.contains(&peer) {
                                     log::info!("[webrtc] Peer {} joined or was discovered", peer);
-                                    active_peer = Some(peer.clone());
+                                    known_peers.insert(peer.clone());
                                     
                                     // Announce our presence back so the new peer discovers us!
                                     let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastPeerJoin);
@@ -197,16 +197,14 @@ pub async fn run(
                             }
                         }
                         SignalingMsg::PeerLeft(peer) => {
-                            if Some(peer) == active_peer {
-                                log::info!("[webrtc] Active peer left");
-                                active_peer = None;
-                                data_channel = None;
-                                rtc.disconnect();
+                            if known_peers.contains(&peer) {
+                                log::info!("[webrtc] Peer {} left", peer);
+                                known_peers.remove(&peer);
                             }
                         }
                         SignalingMsg::Offer { from, sdp } => {
-                            if Some(from.clone()) != active_peer {
-                                active_peer = Some(from.clone());
+                            if !known_peers.contains(&from) {
+                                known_peers.insert(from.clone());
                             }
                             if let Ok(offer) = serde_json::from_str::<str0m::change::SdpOffer>(&sdp) {
                                 log::info!("[webrtc] Received offer from {}", from);
