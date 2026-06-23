@@ -80,36 +80,27 @@ fn render_system_message(ui: &mut Ui, msg: &ChatMessage) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        let (lr, _) = ui.allocate_exact_size(Vec2::new(32.0, 1.0), egui::Sense::hover());
-        if ui.is_rect_visible(lr) {
-            ui.painter()
-                .hline(lr.x_range(), lr.center().y, egui::Stroke::new(1.0, theme::SEPARATOR));
-        }
-        ui.add_space(8.0);
+        ui.label(
+            RichText::new("→")
+                .size(13.0)
+                .color(theme::TEXT_SYSTEM)
+                .strong(),
+        );
+        ui.add_space(4.0);
         ui.label(
             RichText::new(&msg.content)
-                .size(12.0)
+                .size(13.0)
                 .color(theme::TEXT_SYSTEM)
                 .italics(),
         );
-        ui.add_space(8.0);
-        let remaining = (ui.available_width() - 16.0).max(0.0);
-        let (rr, _) = ui.allocate_exact_size(Vec2::new(remaining, 1.0), egui::Sense::hover());
-        if ui.is_rect_visible(rr) {
-            ui.painter()
-                .hline(rr.x_range(), rr.center().y, egui::Stroke::new(1.0, theme::SEPARATOR));
-        }
     });
     ui.add_space(4.0);
 }
 
 fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool) {
-    ui.add_space(if show_header { 12.0 } else { 1.0 });
+    ui.add_space(if show_header { 10.0 } else { 1.0 });
 
-    let author_color = match msg.kind {
-        MessageKind::Own => theme::TEXT_OWN_AUTHOR,
-        _                => theme::TEXT_PEER_AUTHOR,
-    };
+    let author_color = theme::avatar_color(&msg.author);
 
     ui.horizontal_top(|ui| {
         ui.add_space(12.0);
@@ -140,10 +131,89 @@ fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool) {
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
             );
+            if let Some(ref att) = msg.attachment {
+                render_attachment(ui, att);
+            }
         });
 
         ui.add_space(12.0);
     });
+}
+
+fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
+    ui.add_space(4.0);
+    match att.kind {
+        crate::state::AttachmentKind::Image => {
+            if let Some(tex) = super::image_loader::get_avatar_texture(ui.ctx(), &att.url) {
+                let nat   = tex.size_vec2();
+                let max_w = ui.available_width().min(420.0);
+                let scale = if nat.x > 0.0 { (max_w / nat.x).min(1.0) } else { 1.0 };
+                let mut display = nat * scale;
+                if display.y > 320.0 {
+                    display = display * (320.0 / display.y);
+                }
+                let sized = egui::load::SizedTexture::new(tex.id(), display);
+                ui.add(egui::Image::new(sized));
+            } else {
+                ui.label(RichText::new("⏳ Loading image…").size(13.0).color(theme::TEXT_MUTED));
+            }
+        }
+        crate::state::AttachmentKind::Audio => {
+            egui::Frame::default()
+                .fill(theme::ELEVATED_BG)
+                .corner_radius(CornerRadius::same(8u8))
+                .inner_margin(egui::Margin::symmetric(12i8, 8i8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🎵").size(16.0));
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&att.filename).size(13.0).color(theme::TEXT_PRIMARY)
+                            )
+                            .wrap_mode(egui::TextWrapMode::Truncate),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Open").clicked() {
+                                open_externally(&att.url);
+                            }
+                        });
+                    });
+                });
+        }
+        crate::state::AttachmentKind::Video => {
+            egui::Frame::default()
+                .fill(theme::ELEVATED_BG)
+                .corner_radius(CornerRadius::same(8u8))
+                .inner_margin(egui::Margin::symmetric(12i8, 8i8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🎬").size(16.0));
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&att.filename).size(13.0).color(theme::TEXT_PRIMARY)
+                            )
+                            .wrap_mode(egui::TextWrapMode::Truncate),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Open").clicked() {
+                                open_externally(&att.url);
+                            }
+                        });
+                    });
+                });
+        }
+    }
+}
+
+fn open_externally(url: &str) {
+    #[cfg(target_os = "windows")]
+    { let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn(); }
+    #[cfg(target_os = "macos")]
+    { let _ = std::process::Command::new("open").arg(url).spawn(); }
+    #[cfg(target_os = "linux")]
+    { let _ = std::process::Command::new("xdg-open").arg(url).spawn(); }
 }
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
@@ -209,6 +279,7 @@ pub fn sidebar_user_row(ui: &mut Ui, username: &str, avatar_url: Option<&str>, i
 // ── Voice Toggle ──────────────────────────────────────────────────────────────
 
 /// Returns `true` if clicked (toggled) this frame.
+#[allow(dead_code)]
 pub fn voice_toggle_button(ui: &mut Ui, active: bool) -> bool {
     let (icon, label, fill, text_color) = if active {
         ("🔴", " Disconnect Voice", theme::RED_DANGER, Color32::WHITE)

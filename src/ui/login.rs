@@ -38,8 +38,18 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
         .frame(Frame::default().fill(theme::DARK_BG))
         .show(ctx, |ui| {
             let available = ui.max_rect();
-            let card_w = 420.0_f32;
-            let card_h = if state.is_registering { 540.0_f32 } else { 480.0_f32 };
+            let safe = theme::SAFE_MARGIN;
+
+            // Card dimensions scale down when window is small, always maintaining
+            // at least SAFE_MARGIN clearance on every side.
+            let ideal_card_h = if state.is_registering { 540.0_f32 } else { 480.0_f32 };
+            let card_w = (available.width()  - 2.0 * safe).min(420.0_f32).max(280.0);
+            let card_h = (available.height() - 2.0 * safe).min(ideal_card_h).max(200.0);
+
+            // Scale inner padding proportionally so content never overflows the card.
+            let card_pad_f32 = (card_h / ideal_card_h * 40.0).clamp(12.0, 40.0);
+            let card_pad = card_pad_f32.round() as i8;
+
             let card_rect = egui::Rect::from_center_size(
                 available.center(),
                 Vec2::new(card_w, card_h),
@@ -62,7 +72,7 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
                 Frame::default()
                     .fill(theme::SIDEBAR_BG)
                     .corner_radius(CornerRadius::same(16u8))
-                    .inner_margin(Margin::same(40i8))
+                    .inner_margin(Margin::same(card_pad))
                     .shadow(egui::epaint::Shadow {
                         offset: [0i8, 12i8],
                         blur:   40u8,
@@ -70,7 +80,9 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
                         color:  Color32::from_black_alpha(100),
                     })
                     .show(ui, |ui| {
-                        ui.set_min_size(Vec2::new(card_w - 80.0, card_h - 80.0));
+                        let inner_w = (card_w - 2.0 * card_pad_f32).max(0.0);
+                        let inner_h = (card_h - 2.0 * card_pad_f32).max(0.0);
+                        ui.set_min_size(Vec2::new(inner_w, inner_h));
                         login_card_content(ctx, ui, state);
                     });
             });

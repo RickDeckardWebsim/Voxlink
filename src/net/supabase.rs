@@ -164,35 +164,100 @@ pub fn update_profile(user_id: &str, access_token: &str, username: &str, avatar_
 pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &str) -> Result<String> {
     let client = Client::new();
     let filename = format!("{}_avatar.{}", user_id, ext);
-    let url = format!("{}/storage/v1/object/avatars/{}?apikey={}", BASE_URL, filename, ANON_KEY);
-    
-    let content_type = match ext {
-        "png" => "image/png",
-        "jpeg" | "jpg" => "image/jpeg",
-        _ => "application/octet-stream",
+    let obj_url  = format!("{}/storage/v1/object/avatars/{}", BASE_URL, filename);
+
+    let content_type = match ext.to_lowercase().as_str() {
+        "png"          => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif"          => "image/gif",
+        "webp"         => "image/webp",
+        _              => "application/octet-stream",
     };
-    
-    // We use POST to allow upserting, or actually Supabase storage uses POST for new, PUT for update.
-    // If it already exists, POST might fail. Let's use PUT to upsert.
-    // To upsert, we need a header: "x-upsert": "true" (some versions use this)
-    // Actually, just using PUT /object/avatars/path works for upsert.
-    // Let's use PUT just in case.
-    // Wait, the standard Supabase storage API is POST to upload, but PUT with upsert works.
-    
-    let res = client.post(&url)
+
+    // PUT = standard upsert verb for Supabase Storage.
+    let res = client.put(&obj_url)
         .header("apikey", ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", content_type)
         .header("x-upsert", "true")
         .body(bytes.clone())
         .send()?;
-        
+
+    if !res.status().is_success() {
+        // Older Supabase Storage versions: fall back to POST with x-upsert.
+        let res2 = client.post(&obj_url)
+            .header("apikey", ANON_KEY)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Content-Type", content_type)
+            .header("x-upsert", "true")
+            .body(bytes)
+            .send()?;
+
+        if !res2.status().is_success() {
+            let status = res2.status();
+            let body   = res2.text().unwrap_or_default();
+            return Err(anyhow::anyhow!("Avatar upload failed ({}): {}", status, body));
+        }
+    }
+
+    // Append a timestamp so image_loader re-fetches instead of serving the cached texture.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Ok(format!("{}/storage/v1/object/public/avatars/{}?t={}", BASE_URL, filename, ts))
+}
+
+/// Upload a chat media attachment. Files are stored under `avatars/chat/{user_id}/` so only
+/// one bucket ("avatars") needs to be configured in Supabase.
+pub fn upload_media(
+    user_id: &str,
+    access_token: &str,
+    bytes: Vec<u8>,
+    ext: &str,
+    original_name: &str,
+) -> Result<String> {
+    let client = Client::new();
+    let ts: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let safe_name: String = original_name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+        .take(40)
+        .collect();
+    let path    = format!("chat/{}/{}-{}", user_id, ts, safe_name);
+    let obj_url = format!("{}/storage/v1/object/avatars/{}", BASE_URL, path);
+
+    let res = client.post(&obj_url)
+        .header("apikey", ANON_KEY)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Content-Type", mime_for_ext(ext))
+        .body(bytes)
+        .send()?;
+
     if !res.status().is_success() {
         let status = res.status();
-        let error_body = res.text().unwrap_or_default();
-        return Err(anyhow::anyhow!("Upload failed: {} - {}", status, error_body));
+        let body   = res.text().unwrap_or_default();
+        return Err(anyhow::anyhow!("Media upload failed ({}): {}", status, body));
     }
-        
-    let public_url = format!("{}/storage/v1/object/public/avatars/{}", BASE_URL, filename);
-    Ok(public_url)
+
+    Ok(format!("{}/storage/v1/object/public/avatars/{}", BASE_URL, path))
+}
+
+fn mime_for_ext(ext: &str) -> &'static str {
+    match ext.to_lowercase().as_str() {
+        "png"          => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif"          => "image/gif",
+        "webp"         => "image/webp",
+        "mp3"          => "audio/mpeg",
+        "ogg"          => "audio/ogg",
+        "wav"          => "audio/wav",
+        "mp4"          => "video/mp4",
+        "webm"         => "video/webm",
+        "mov"          => "video/quicktime",
+        _              => "application/octet-stream",
+    }
 }

@@ -34,6 +34,30 @@ pub enum MessageKind {
     System,
 }
 
+/// Kind of media file attached to a message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AttachmentKind {
+    Image,
+    Audio,
+    Video,
+}
+
+/// A file attached to a chat message, stored in Supabase Storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attachment {
+    pub url: String,
+    pub kind: AttachmentKind,
+    pub filename: String,
+}
+
+/// Value produced by the background media-upload thread.
+pub struct MediaUploadResult {
+    pub url: String,
+    pub kind: AttachmentKind,
+    pub filename: String,
+    pub caption: String,
+}
+
 /// A single entry in the chat log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -44,26 +68,39 @@ pub struct ChatMessage {
     /// Formatted as "HH:MM" local time.
     pub timestamp: String,
     pub kind: MessageKind,
+    pub attachment: Option<Attachment>,
 }
 
 impl ChatMessage {
-    pub fn new_own(author: impl Into<String>, content: impl Into<String>, id: u64) -> Self {
+    pub fn new_own(
+        author: impl Into<String>,
+        content: impl Into<String>,
+        id: u64,
+        attachment: Option<Attachment>,
+    ) -> Self {
         Self {
             id,
             author: author.into(),
             content: content.into(),
             timestamp: timestamp_now(),
             kind: MessageKind::Own,
+            attachment,
         }
     }
 
-    pub fn new_peer(author: impl Into<String>, content: impl Into<String>, id: u64) -> Self {
+    pub fn new_peer(
+        author: impl Into<String>,
+        content: impl Into<String>,
+        id: u64,
+        attachment: Option<Attachment>,
+    ) -> Self {
         Self {
             id,
             author: author.into(),
             content: content.into(),
             timestamp: timestamp_now(),
             kind: MessageKind::Peer,
+            attachment,
         }
     }
 
@@ -74,6 +111,7 @@ impl ChatMessage {
             content: content.into(),
             timestamp: timestamp_now(),
             kind: MessageKind::System,
+            attachment: None,
         }
     }
 }
@@ -144,8 +182,8 @@ pub enum NetEvent {
     PeerJoined(String),
     /// A peer disconnected.
     PeerLeft(String),
-    /// A P2P text message was received (Phase 3).
-    MessageReceived { from: String, content: String },
+    /// A text or media message was received from a peer.
+    MessageReceived { from: String, content: String, attachment: Option<Attachment> },
     /// Successfully connected to the signaling server.
     Connected,
     /// Connection to the signaling server was lost.
@@ -160,8 +198,10 @@ pub enum NetEvent {
 pub enum UiCommand {
     /// Start connecting with the given username.
     Connect { username: String },
-    /// Send a P2P text message to all peers (Phase 3).
+    /// Send a P2P text message to all peers.
     SendMessage(String),
+    /// Send a media attachment (already uploaded to storage) to all peers.
+    SendMedia { caption: String, url: String, kind: AttachmentKind, filename: String },
     /// Toggle the local microphone (Phase 4).
     ToggleVoice(bool),
     /// Gracefully disconnect.
@@ -199,6 +239,10 @@ pub struct AppState {
     pub profile_in_progress: bool,
     pub profile_error: Option<String>,
     pub profile_upload_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+
+    // ── Media Upload ──
+    pub media_in_progress: bool,
+    pub media_rx: Option<std::sync::mpsc::Receiver<Result<MediaUploadResult, String>>>,
 
     // ── Updater ──
     pub updater_tx: std::sync::mpsc::Sender<crate::net::updater::UpdaterEvent>,
@@ -255,6 +299,8 @@ impl Default for AppState {
             profile_in_progress: false,
             profile_error: None,
             profile_upload_rx: None,
+            media_in_progress: false,
+            media_rx: None,
             updater_tx,
             updater_rx,
             update_available_version: None,
@@ -292,15 +338,28 @@ impl AppState {
     }
 
     pub fn push_own(&mut self, content: impl Into<String>) {
+        self.push_own_media(content, None);
+    }
+
+    pub fn push_own_media(&mut self, content: impl Into<String>, attachment: Option<Attachment>) {
         let id = self.next_id();
         let author = self.username.clone();
-        self.messages.push(ChatMessage::new_own(author, content, id));
+        self.messages.push(ChatMessage::new_own(author, content, id, attachment));
         self.scroll_to_bottom = true;
     }
 
     pub fn push_peer(&mut self, author: impl Into<String>, content: impl Into<String>) {
+        self.push_peer_media(author, content, None);
+    }
+
+    pub fn push_peer_media(
+        &mut self,
+        author: impl Into<String>,
+        content: impl Into<String>,
+        attachment: Option<Attachment>,
+    ) {
         let id = self.next_id();
-        self.messages.push(ChatMessage::new_peer(author, content, id));
+        self.messages.push(ChatMessage::new_peer(author, content, id, attachment));
         self.scroll_to_bottom = true;
     }
 

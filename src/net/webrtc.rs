@@ -101,10 +101,11 @@ pub async fn run(
                         }
                         Event::ChannelData(data) => {
                             if let Ok(msg) = String::from_utf8(data.data) {
-                                let from = "Peer".to_string(); // we can't easily know who this is without data channel tracking, but we don't use this anymore anyway
+                                let from = "Peer".to_string();
                                 let _ = net_tx.send(NetEvent::MessageReceived {
                                     from,
                                     content: msg,
+                                    attachment: None,
                                 });
                                 ctx.request_repaint();
                             }
@@ -241,6 +242,19 @@ pub async fn run(
                         }
                         UiCommand::SendMessage(content) => {
                             let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastMessage(content));
+                        }
+                        UiCommand::SendMedia { caption, url, kind, filename } => {
+                            let kind_str = match kind {
+                                crate::state::AttachmentKind::Image => "image",
+                                crate::state::AttachmentKind::Audio => "audio",
+                                crate::state::AttachmentKind::Video => "video",
+                            };
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastMedia {
+                                caption,
+                                url,
+                                kind: kind_str.to_string(),
+                                filename,
+                            });
                         }
                         UiCommand::ToggleVoice(active) => {
                             mic_active = active;

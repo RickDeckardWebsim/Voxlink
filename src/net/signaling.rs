@@ -19,6 +19,7 @@ pub enum SigCmd {
     SendAnswer { to: String, sdp: String },
     BroadcastPeerJoin,
     BroadcastMessage(String),
+    BroadcastMedia { caption: String, url: String, kind: String, filename: String },
     Disconnect,
 }
 
@@ -138,6 +139,17 @@ async fn connect_and_run(
                             }), &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
+                        SigCmd::BroadcastMedia { caption, url, kind, filename } => {
+                            let topic = format!("realtime:{}", CHANNEL);
+                            let broadcast = make_broadcast(&topic, "chat_media", json!({
+                                "from": username,
+                                "content": caption,
+                                "url": url,
+                                "kind": kind,
+                                "filename": filename,
+                            }), &mut ref_count);
+                            send_text(&mut ws_stream, &broadcast).await?;
+                        }
                     }
                 } else {
                     return Ok(true);
@@ -211,9 +223,31 @@ fn handle_incoming(
                         let _ = net_tx.send(NetEvent::MessageReceived {
                             from: from.to_string(),
                             content: content.to_string(),
+                            attachment: None,
                         });
                         ctx.request_repaint();
                     }
+                }
+                "chat_media" => {
+                    let content  = b_payload["content"].as_str().unwrap_or("").to_string();
+                    let url      = b_payload["url"].as_str().unwrap_or("").to_string();
+                    let kind_str = b_payload["kind"].as_str().unwrap_or("image");
+                    let filename = b_payload["filename"].as_str().unwrap_or("attachment").to_string();
+
+                    let kind = match kind_str {
+                        "audio" => crate::state::AttachmentKind::Audio,
+                        "video" => crate::state::AttachmentKind::Video,
+                        _       => crate::state::AttachmentKind::Image,
+                    };
+                    let attachment = if url.is_empty() { None } else {
+                        Some(crate::state::Attachment { url, kind, filename })
+                    };
+                    let _ = net_tx.send(NetEvent::MessageReceived {
+                        from: from.to_string(),
+                        content,
+                        attachment,
+                    });
+                    ctx.request_repaint();
                 }
                 _ => {}
             }

@@ -20,7 +20,9 @@ pub const TEXT_PRIMARY: Color32   = Color32::from_rgb(0xdb, 0xde, 0xe1);
 pub const TEXT_MUTED: Color32     = Color32::from_rgb(0x80, 0x84, 0x8e);
 pub const SEPARATOR: Color32      = Color32::from_rgb(0x1a, 0x1b, 0x1f);
 pub const TEXT_SYSTEM: Color32    = Color32::from_rgb(0x72, 0x76, 0x7d);
+#[allow(dead_code)]
 pub const TEXT_OWN_AUTHOR: Color32  = BLURPLE;
+#[allow(dead_code)]
 pub const TEXT_PEER_AUTHOR: Color32 = Color32::from_rgb(0xf2, 0xf3, 0xf5);
 
 // ── Spacing ──────────────────────────────────────────────────────────────────
@@ -31,6 +33,12 @@ pub const INPUT_BAR_HEIGHT: f32       = 68.0;
 pub const AVATAR_SIZE: f32            = 36.0;
 // Corner radius used with CornerRadius::same() — must be u8
 pub const CORNER_RADIUS: u8 = 8;
+
+// Minimum gap between any UI element and the window border (≈ 0.2 cm at 96 dpi)
+pub const SAFE_MARGIN: f32 = 8.0;
+// Sidebar bottom section heights — used to compute the scroll area ceiling
+pub const SIDEBAR_BOTTOM_H: f32 = 60.0; // profile bar
+pub const SIDEBAR_VOICE_H:  f32 = 54.0; // voice panel (only when voice_active)
 
 // ── Avatar Colors ─────────────────────────────────────────────────────────────
 

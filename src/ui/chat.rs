@@ -3,12 +3,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use egui::{Color32, CornerRadius, Frame, Key, Margin, RichText, ScrollArea, Vec2};
+use std::thread;
 
 use crate::state::{AppState, MessageKind};
 use super::{components, theme};
 
 #[allow(deprecated)] // egui 0.34: Panel::show still works, show_inside() is new preferred API
 pub fn render(ctx: &egui::Context, state: &mut AppState) {
+    poll_media_upload(ctx, state);
     // ── 1. Left sidebar panel ─────────────────────────────────────────────────
     egui::SidePanel::left("sidebar")
         .exact_size(theme::SIDEBAR_WIDTH)
@@ -103,7 +105,8 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
         });
 
     // Scrollable user / channel list — reserve space for bottom control bar
-    let bottom_h = 96.0;
+    let bottom_h = theme::SIDEBAR_BOTTOM_H
+        + if state.voice_active { theme::SIDEBAR_VOICE_H } else { 0.0 };
     let scroll_max = (ui.available_height() - bottom_h).max(40.0);
     ScrollArea::vertical()
         .id_salt("sidebar_scroll")
@@ -133,44 +136,44 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             ui.add_space(12.0);
         });
 
-    // Push bottom bar to the very bottom, minus some padding
+    // Push bottom bar to the very bottom
     let remaining = ui.available_height() - bottom_h;
-    if remaining > 8.0 {
-        ui.add_space(remaining - 8.0);
-    } else {
-        ui.add_space(8.0);
+    if remaining > 0.0 {
+        ui.add_space(remaining);
     }
 
-    egui::Frame::NONE
-        .inner_margin(Margin::symmetric(8i8, 0i8))
-        .show(ui, |ui| {
-            Frame::default()
-                .fill(theme::HEADER_BG)
-                .corner_radius(CornerRadius::same(8u8))
-                .inner_margin(Margin::symmetric(10i8, 10i8))
-                .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
-                .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                if components::voice_toggle_button(ui, state.voice_active) {
-                    state.voice_active = !state.voice_active;
-                    if let Some(tx) = &state.cmd_tx {
-                        let _ = tx.send(crate::state::UiCommand::ToggleVoice(state.voice_active));
-                    }
-                    state.push_system(if state.voice_active {
-                        "🎙  Voice connected — streaming audio P2P"
-                    } else {
-                        "🔇  Voice disconnected."
+    // Voice connection panel (only visible if active)
+    if state.voice_active {
+        Frame::default()
+            .fill(theme::HEADER_BG)
+            .inner_margin(Margin::symmetric(16i8, 8i8))
+            .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("🎙").size(16.0).color(theme::GREEN_ONLINE));
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("Voice Connected").size(13.0).color(theme::GREEN_ONLINE).strong());
+                        ui.label(RichText::new("RTC / P2P").size(11.0).color(theme::TEXT_MUTED));
                     });
-                }
-                ui.add_space(6.0);
+                });
+            });
+    }
+
+    // Bottom profile bar
+    Frame::default()
+        .fill(theme::HEADER_BG)
+        .inner_margin(Margin::symmetric(14i8, 12i8))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref());
                 let resp = ui.horizontal(|ui| {
-                    let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref());
-                    components::draw_avatar(ui, &state.username, avatar_url, 28.0);
-                    ui.add_space(6.0);
+                    components::draw_avatar(ui, &state.username, avatar_url, 32.0);
+                    ui.add_space(8.0);
                     ui.vertical(|ui| {
                         ui.label(
-                            RichText::new(&state.username).size(13.0).color(Color32::WHITE).strong(),
+                            RichText::new(&state.username).size(14.0).color(Color32::WHITE).strong(),
                         );
                         ui.horizontal(|ui| {
                             let color = if state.voice_active { theme::GREEN_ONLINE } else { theme::TEXT_PRIMARY };
@@ -185,15 +188,33 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                         });
                     });
                 }).response;
-                
+
                 if ui.interact(resp.rect, egui::Id::new("user_row_click"), egui::Sense::click()).clicked() {
                     state.show_profile_modal = true;
                 }
                 if ui.rect_contains_pointer(resp.rect) {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
+
+                // Voice Toggle button on the right
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_text = if state.voice_active { "📞" } else { "🎙" };
+                    let btn = egui::Button::new(
+                        RichText::new(btn_text).size(16.0).color(theme::TEXT_PRIMARY)
+                    ).fill(Color32::TRANSPARENT).stroke(egui::Stroke::NONE).corner_radius(CornerRadius::same(6u8));
+                    
+                    let response = ui.add(btn);
+                    if response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if response.clicked() {
+                        state.voice_active = !state.voice_active;
+                        if let Some(tx) = &state.cmd_tx {
+                            let _ = tx.send(crate::state::UiCommand::ToggleVoice(state.voice_active));
+                        }
+                    }
+                });
             });
-        });
         });
 }
 
@@ -234,18 +255,24 @@ fn render_channel_header(ui: &mut egui::Ui, state: &AppState) {
             ui.add_space(4.0);
             ui.label(RichText::new("general").size(15.0).color(Color32::WHITE).strong());
             ui.label(RichText::new("|").size(16.0).color(theme::SEPARATOR));
-            ui.label(
-                RichText::new("VoxLink P2P — messages route directly between you and your peers")
-                    .size(13.0)
-                    .color(theme::TEXT_MUTED),
-            );
+            // RTL sub-layout: peer count pins to the right, description fills the rest
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(theme::SAFE_MARGIN);
                 ui.label(
                     RichText::new(format!("👥 {}", state.peers.len() + 1))
                         .size(13.0)
                         .color(theme::TEXT_MUTED),
                 );
                 ui.add_space(8.0);
+                // Description label takes all remaining width; truncates before overflowing
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("VoxLink P2P — messages route directly between you and your peers")
+                            .size(13.0)
+                            .color(theme::TEXT_MUTED),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Truncate),
+                );
             });
         });
     });
@@ -264,6 +291,7 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
         .max_height(msg_height)
         .stick_to_bottom(true)
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             ui.set_min_height(msg_height);
             ui.add_space(8.0);
 
@@ -302,46 +330,146 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
 
 fn render_input_bar(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
-        // Input field
         Frame::default()
             .fill(theme::INPUT_BG)
-            .corner_radius(CornerRadius::same(10u8))
-            .inner_margin(Margin::symmetric(12i8, 8i8))
+            .corner_radius(CornerRadius::same(8u8))
+            .inner_margin(Margin { left: 10, right: 14, top: 10, bottom: 10 })
             .show(ui, |ui| {
-                let input_id   = egui::Id::new("message_input_field");
-                let avail_w    = (ui.available_width() - 56.0).max(100.0);
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    // ── Attachment button ────────────────────────────────────
+                    if state.media_in_progress {
+                        ui.spinner();
+                    } else {
+                        let attach = ui.add(
+                            egui::Button::new(
+                                RichText::new("📎").size(16.0).color(theme::TEXT_MUTED),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .corner_radius(CornerRadius::same(4u8)),
+                        );
+                        if attach.hovered() {
+                            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if attach.clicked() {
+                            pick_and_upload_media(state, ctx);
+                        }
+                    }
+                    ui.add_space(6.0);
 
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut state.message_input)
-                        .id(input_id)
-                        .hint_text("Message #general…")
-                        .desired_width(avail_w)
-                        .font(egui::FontId::proportional(15.0))
-                        .frame(egui::Frame::NONE),
-                );
-
-                if response.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) {
-                    try_send_message(state);
-                    ctx.memory_mut(|m| m.request_focus(input_id));
-                }
+                    // ── Text input ───────────────────────────────────────────
+                    let input_id = egui::Id::new("message_input_field");
+                    let avail_w  = ui.available_width();
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut state.message_input)
+                            .id(input_id)
+                            .hint_text("Message #general…")
+                            .desired_width(avail_w)
+                            .font(egui::FontId::proportional(15.0))
+                            .frame(egui::Frame::NONE),
+                    );
+                    if response.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) {
+                        try_send_message(state);
+                        ctx.memory_mut(|m| m.request_focus(input_id));
+                    }
+                });
             });
-
-        ui.add_space(6.0);
-
-        // Send button
-        let can_send = !state.message_input.trim().is_empty();
-        ui.add_enabled_ui(can_send, |ui| {
-            let btn = egui::Button::new(RichText::new("➤").size(18.0).color(Color32::WHITE))
-                .fill(if can_send { theme::BLURPLE } else { theme::ELEVATED_BG })
-                .corner_radius(CornerRadius::same(10u8))
-                .min_size(Vec2::new(40.0, 40.0));
-
-            if ui.add(btn).clicked() {
-                try_send_message(state);
-            }
-        });
     });
 }
+
+// ── Media upload polling ──────────────────────────────────────────────────────
+
+fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
+    let result = state.media_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+    if let Some(result) = result {
+        state.media_in_progress = false;
+        state.media_rx = None;
+        match result {
+            Ok(r) => {
+                let att = crate::state::Attachment {
+                    url:      r.url.clone(),
+                    kind:     r.kind.clone(),
+                    filename: r.filename.clone(),
+                };
+                state.push_own_media(r.caption.clone(), Some(att.clone()));
+                if let Some(tx) = &state.cmd_tx {
+                    let _ = tx.send(crate::state::UiCommand::SendMedia {
+                        caption:  r.caption,
+                        url:      att.url,
+                        kind:     att.kind,
+                        filename: att.filename,
+                    });
+                }
+            }
+            Err(e) => {
+                state.push_system(format!("⚠ Media upload failed: {}", e));
+            }
+        }
+        ctx.request_repaint();
+    }
+}
+
+fn pick_and_upload_media(state: &mut AppState, ctx: &egui::Context) {
+    let session = match &state.session {
+        Some(s) => s.clone(),
+        None    => return,
+    };
+
+    let path = rfd::FileDialog::new()
+        .add_filter("Images",    &["png", "jpg", "jpeg", "gif", "webp"])
+        .add_filter("Audio",     &["mp3", "ogg", "wav"])
+        .add_filter("Video",     &["mp4", "webm", "mov"])
+        .add_filter("All Media", &["png", "jpg", "jpeg", "gif", "webp",
+                                    "mp3", "ogg", "wav", "mp4", "webm", "mov"])
+        .pick_file();
+
+    let path = match path {
+        Some(p) => p,
+        None    => return,
+    };
+
+    state.media_in_progress = true;
+    let caption = state.message_input.trim().to_string();
+    state.message_input.clear();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    state.media_rx = Some(rx);
+    let ctx_clone = ctx.clone();
+
+    thread::spawn(move || {
+        let ext      = path.extension().and_then(|e| e.to_str()).unwrap_or("bin").to_string();
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("attachment").to_string();
+        let kind     = kind_for_ext(&ext);
+
+        let result = std::fs::read(&path)
+            .map_err(|e| format!("Failed to read file: {}", e))
+            .and_then(|bytes| {
+                crate::net::supabase::upload_media(
+                    &session.user_id,
+                    &session.access_token,
+                    bytes,
+                    &ext,
+                    &filename,
+                )
+                .map_err(|e| e.to_string())
+            })
+            .map(|url| crate::state::MediaUploadResult { url, kind, filename, caption });
+
+        let _ = tx.send(result);
+        ctx_clone.request_repaint();
+    });
+}
+
+fn kind_for_ext(ext: &str) -> crate::state::AttachmentKind {
+    match ext.to_lowercase().as_str() {
+        "mp3" | "ogg" | "wav" | "flac" | "aac" => crate::state::AttachmentKind::Audio,
+        "mp4" | "webm" | "mov" | "avi" | "mkv" => crate::state::AttachmentKind::Video,
+        _                                       => crate::state::AttachmentKind::Image,
+    }
+}
+
+// ── Message send ──────────────────────────────────────────────────────────────
 
 fn try_send_message(state: &mut AppState) {
     let content = state.message_input.trim().to_string();

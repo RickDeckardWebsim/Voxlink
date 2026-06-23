@@ -52,6 +52,16 @@ pub fn get_avatar_texture(ctx: &Context, url: &str) -> Option<TextureHandle> {
     None
 }
 
+/// Remove a URL from the texture cache, forcing a re-fetch on the next access.
+/// Call after uploading a new avatar so the stale texture is not reused.
+pub fn invalidate(url: &str) {
+    if let Some(cache) = CACHE.get() {
+        if let Ok(mut map) = cache.lock() {
+            map.remove(url);
+        }
+    }
+}
+
 fn fetch_and_decode(url: &str) -> anyhow::Result<ColorImage> {
     let bytes = reqwest::blocking::get(url)?.bytes()?;
     let image = image::load_from_memory(&bytes)?;

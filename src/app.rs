@@ -127,8 +127,8 @@ impl AppState {
                 self.push_system(format!("👋 {} left the room.", username));
             }
 
-            NetEvent::MessageReceived { from, content } => {
-                self.push_peer(from, content);
+            NetEvent::MessageReceived { from, content, attachment } => {
+                self.push_peer_media(from, content, attachment);
             }
 
             NetEvent::Error(msg) => {

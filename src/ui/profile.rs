@@ -26,6 +26,10 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
             match result {
                 Ok(Some(url)) => {
                     if let Some(mut session) = state.session.take() {
+                        // Bust the old cached texture so image_loader re-fetches the new avatar.
+                        if let Some(old_url) = &session.avatar_url {
+                            super::image_loader::invalidate(old_url);
+                        }
                         session.avatar_url = Some(url);
                         session.save();
                         state.session = Some(session);
