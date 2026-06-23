@@ -68,7 +68,7 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
                     ui.painter().text(
                         rect.center(),
                         egui::Align2::CENTER_CENTER,
-                        "✏️ Edit",
+                        "Edit",
                         egui::FontId::proportional(14.0),
                         Color32::WHITE,
                     );

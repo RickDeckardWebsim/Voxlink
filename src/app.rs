@@ -127,11 +127,11 @@ impl AppState {
     pub fn apply_net_event(&mut self, event: NetEvent) {
         match event {
             NetEvent::Connected => {
-                self.push_system("🟢 Connected to VoxLink signaling. Waiting for peers…");
+                self.push_system("Connected to VoxLink signaling. Waiting for peers…");
             }
 
             NetEvent::Disconnected => {
-                self.push_system("🔴 Disconnected from signaling server.");
+                self.push_system("Disconnected from signaling server.");
                 // Clear peer list so we don't show stale entries
                 self.peers.clear();
             }
@@ -145,12 +145,12 @@ impl AppState {
                         peer_id: None,
                     });
                 }
-                self.push_system(format!("👋 {} joined the room.", username));
+                self.push_system(format!("{} joined the room.", username));
             }
 
             NetEvent::PeerLeft(username) => {
                 self.peers.retain(|p| p.username != username);
-                self.push_system(format!("👋 {} left the room.", username));
+                self.push_system(format!("{} left the room.", username));
             }
 
             NetEvent::MessageReceived { from, content, attachment } => {

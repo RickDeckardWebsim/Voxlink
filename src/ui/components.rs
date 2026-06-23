@@ -271,7 +271,8 @@ pub fn sidebar_user_row(ui: &mut Ui, username: &str, avatar_url: Option<&str>, i
 
                 if voice_active {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new("🎙").size(12.0));
+                        // U+25CF BLACK CIRCLE — universally renderable BMP character
+                        ui.label(RichText::new("\u{25CF}").size(10.0).color(theme::GREEN_ONLINE));
                     });
                 }
             });
@@ -283,14 +284,14 @@ pub fn sidebar_user_row(ui: &mut Ui, username: &str, avatar_url: Option<&str>, i
 /// Returns `true` if clicked (toggled) this frame.
 #[allow(dead_code)]
 pub fn voice_toggle_button(ui: &mut Ui, active: bool) -> bool {
-    let (icon, label, fill, text_color) = if active {
-        ("🔴", " Disconnect Voice", theme::RED_DANGER, Color32::WHITE)
+    let (label, fill, text_color) = if active {
+        ("Disconnect Voice", theme::RED_DANGER, Color32::WHITE)
     } else {
-        ("🎙", " Connect Voice", Color32::TRANSPARENT, theme::TEXT_PRIMARY)
+        ("Connect Voice", Color32::TRANSPARENT, theme::TEXT_PRIMARY)
     };
 
     let btn = egui::Button::new(
-        RichText::new(format!("{}{}", icon, label))
+        RichText::new(label)
             .color(text_color)
             .size(13.0),
     )

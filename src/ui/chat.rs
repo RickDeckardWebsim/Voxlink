@@ -48,7 +48,7 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
                             crate::net::updater::run_update(state.updater_tx.clone());
                         }
                         ui.add_space(8.0);
-                        ui.label(RichText::new(format!("🚀 Version {} is available!", version)).color(Color32::WHITE).strong());
+                        ui.label(RichText::new(format!("Version {} is available!", version)).color(Color32::WHITE).strong());
                     }
                 });
             });
@@ -150,7 +150,8 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("🎙").size(16.0).color(theme::GREEN_ONLINE));
+                    // U+25CF BLACK CIRCLE as a rendered mic indicator (BMP, always available)
+                    ui.label(RichText::new("\u{25CF}").size(14.0).color(theme::GREEN_ONLINE));
                     ui.add_space(4.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new("Voice Connected").size(13.0).color(theme::GREEN_ONLINE).strong());
@@ -198,9 +199,14 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
 
                 // Voice Toggle button on the right
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_text = if state.voice_active { "📞" } else { "🎙" };
+                    // Text labels: "[ ]" = off, "[•]" = live — no supplementary-plane emoji
+                    let (btn_text, btn_color) = if state.voice_active {
+                        ("[End]", theme::RED_DANGER)
+                    } else {
+                        ("[Mic]", theme::TEXT_PRIMARY)
+                    };
                     let btn = egui::Button::new(
-                        RichText::new(btn_text).size(16.0).color(theme::TEXT_PRIMARY)
+                        RichText::new(btn_text).size(13.0).color(btn_color)
                     ).fill(Color32::TRANSPARENT).stroke(egui::Stroke::NONE).corner_radius(CornerRadius::same(6u8));
                     
                     let response = ui.add(btn);
@@ -259,7 +265,8 @@ fn render_channel_header(ui: &mut egui::Ui, state: &AppState) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(theme::SAFE_MARGIN);
                 ui.label(
-                    RichText::new(format!("👥 {}", state.peers.len() + 1))
+                    // U+25A3 WHITE SQUARE CONTAINING BLACK SMALL SQUARE — BMP "people" indicator
+                    RichText::new(format!("{} online", state.peers.len() + 1))
                         .size(13.0)
                         .color(theme::TEXT_MUTED),
                 );

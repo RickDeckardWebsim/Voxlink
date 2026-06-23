@@ -168,7 +168,7 @@ fn login_card_content(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSta
             if state.auth_in_progress {
                 ui.spinner();
             } else {
-                let btn_text = if state.is_registering { "Register ✨" } else { "Login 🚀" };
+                let btn_text = if state.is_registering { "Register" } else { "Login" };
                 let is_valid = !state.email_input.is_empty() && !state.password_input.is_empty() && (!state.is_registering || !state.username_input.is_empty());
                 
                 ui.add_enabled_ui(is_valid, |ui| {
