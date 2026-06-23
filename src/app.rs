@@ -26,6 +26,9 @@ pub struct VoxLinkApp {
 
 impl VoxLinkApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Load system fonts before applying the theme so egui has a font with
+        // comprehensive Unicode coverage. Falls back to bundled Ubuntu-Light.
+        setup_fonts(&cc.egui_ctx);
         // Apply VoxLink dark theme + font sizes
         cc.egui_ctx.set_visuals(ui::theme::voxlink_visuals());
         cc.egui_ctx.global_style_mut(ui::theme::voxlink_style);
@@ -114,6 +117,51 @@ impl eframe::App for VoxLinkApp {
             let _ = tx.send(UiCommand::Disconnect);
         }
     }
+}
+
+// ── Font setup ───────────────────────────────────────────────────────────────
+//
+// egui's bundled Ubuntu-Light lacks many Unicode code points; this function
+// inserts the platform's system UI font as the first (highest-priority) fallback
+// so all printable characters render correctly without needing to bundle fonts.
+
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Candidate paths, tried in order; first readable file wins.
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[
+        "C:/Windows/Fonts/segoeui.ttf",  // Segoe UI — default Windows UI font
+        "C:/Windows/Fonts/arial.ttf",
+    ];
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/Library/Fonts/Arial.ttf",
+    ];
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let candidates: &[&str] = &[
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ];
+
+    for path in candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "SystemUI".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            // Insert at index 0 so it's tried before Ubuntu-Light.
+            // Ubuntu-Light and NotoEmoji remain as fallbacks for any missing glyphs.
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                family.insert(0, "SystemUI".to_owned());
+            }
+            log::info!("[app] Loaded system UI font: {}", path);
+            break;
+        }
+    }
+
+    ctx.set_fonts(fonts);
 }
 
 // ── NetEvent → AppState wiring ────────────────────────────────────────────────

@@ -189,6 +189,39 @@ pub fn update_profile(user_id: &str, access_token: &str, username: &str, avatar_
     Ok(())
 }
 
+// ── Error helpers ─────────────────────────────────────────────────────────────
+
+/// Extract a human-readable message from a Supabase JSON error body.
+fn parse_supabase_error(body: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in &["message", "error_description", "error", "msg"] {
+            if let Some(s) = v[key].as_str() {
+                // Translate known technical messages into user-friendly ones
+                return if s.contains("exp") && s.contains("claim") {
+                    "Session expired — the app will refresh your credentials automatically.".to_string()
+                } else if s.contains("JWT") || s.contains("token") {
+                    "Authentication token invalid — please sign out and back in.".to_string()
+                } else {
+                    s.to_string()
+                };
+            }
+        }
+    }
+    if body.len() > 200 { format!("{}…", &body[..200]) } else { body.to_string() }
+}
+
+/// Returns true when an error string indicates a stale / invalid JWT.
+fn is_auth_error(msg: &str) -> bool {
+    msg.contains("401")
+        || msg.contains("403")
+        || msg.contains("Unauthorized")
+        || msg.contains("exp")
+        || msg.contains("JWT")
+        || msg.contains("expired")
+}
+
+// ── Storage uploads ───────────────────────────────────────────────────────────
+
 pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &str) -> Result<String> {
     let client = Client::new();
     let filename = format!("{}_avatar.{}", user_id, ext);
@@ -222,9 +255,8 @@ pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &st
             .send()?;
 
         if !res2.status().is_success() {
-            let status = res2.status();
-            let body   = res2.text().unwrap_or_default();
-            return Err(anyhow::anyhow!("Avatar upload failed ({}): {}", status, body));
+            let body = res2.text().unwrap_or_default();
+            return Err(anyhow::anyhow!("{}", parse_supabase_error(&body)));
         }
     }
 
@@ -266,12 +298,55 @@ pub fn upload_media(
         .send()?;
 
     if !res.status().is_success() {
-        let status = res.status();
-        let body   = res.text().unwrap_or_default();
-        return Err(anyhow::anyhow!("Media upload failed ({}): {}", status, body));
+        let body = res.text().unwrap_or_default();
+        return Err(anyhow::anyhow!("{}", parse_supabase_error(&body)));
     }
 
     Ok(format!("{}/storage/v1/object/public/avatars/{}", BASE_URL, path))
+}
+
+/// Upload avatar with automatic JWT refresh on auth failure.
+/// Returns `(public_url, new_tokens)` — if `new_tokens` is `Some`, the caller must
+/// persist the new `(access_token, refresh_token)` pair back to `Session` and disk.
+pub fn upload_avatar_auto_refresh(
+    user_id: &str,
+    access_token: &str,
+    refresh_token: &str,
+    bytes: Vec<u8>,
+    ext: &str,
+) -> Result<(String, Option<(String, String)>)> {
+    match upload_avatar(user_id, access_token, bytes.clone(), ext) {
+        Ok(url) => Ok((url, None)),
+        Err(e) if is_auth_error(&e.to_string()) => {
+            let (new_at, new_rt) = refresh_session(refresh_token)
+                .map_err(|_| anyhow::anyhow!("Session expired. Please sign out and back in."))?;
+            let url = upload_avatar(user_id, &new_at, bytes, ext)?;
+            Ok((url, Some((new_at, new_rt))))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Upload media with automatic JWT refresh on auth failure.
+/// Returns `(public_url, new_tokens)` — same contract as `upload_avatar_auto_refresh`.
+pub fn upload_media_auto_refresh(
+    user_id: &str,
+    access_token: &str,
+    refresh_token: &str,
+    bytes: Vec<u8>,
+    ext: &str,
+    original_name: &str,
+) -> Result<(String, Option<(String, String)>)> {
+    match upload_media(user_id, access_token, bytes.clone(), ext, original_name) {
+        Ok(url) => Ok((url, None)),
+        Err(e) if is_auth_error(&e.to_string()) => {
+            let (new_at, new_rt) = refresh_session(refresh_token)
+                .map_err(|_| anyhow::anyhow!("Session expired. Please sign out and back in."))?;
+            let url = upload_media(user_id, &new_at, bytes, ext, original_name)?;
+            Ok((url, Some((new_at, new_rt))))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn mime_for_ext(ext: &str) -> &'static str {

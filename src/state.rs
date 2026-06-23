@@ -50,12 +50,22 @@ pub struct Attachment {
     pub filename: String,
 }
 
+/// Value produced by the background avatar-upload thread.
+pub struct ProfileUploadResult {
+    /// New avatar public URL, or `None` if only a username was saved.
+    pub avatar_url: Option<String>,
+    /// Fresh token pair if the upload had to refresh the JWT; caller must persist.
+    pub new_tokens: Option<(String, String)>,
+}
+
 /// Value produced by the background media-upload thread.
 pub struct MediaUploadResult {
     pub url: String,
     pub kind: AttachmentKind,
     pub filename: String,
     pub caption: String,
+    /// Fresh token pair if the upload had to refresh the JWT; caller must persist.
+    pub new_tokens: Option<(String, String)>,
 }
 
 /// A single entry in the chat log.
@@ -238,7 +248,6 @@ pub struct AppState {
     pub show_profile_modal: bool,
     pub profile_in_progress: bool,
     pub profile_error: Option<String>,
-    pub profile_upload_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
 
     // ── Media Upload ──
     pub media_in_progress: bool,
@@ -254,7 +263,7 @@ pub struct AppState {
     pub update_available_version: Option<String>,
     pub update_in_progress: bool,
     pub update_error: Option<String>,
-    pub profile_rx: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
+    pub profile_rx: Option<std::sync::mpsc::Receiver<Result<ProfileUploadResult, String>>>,
 
     // ── Chat ──
     pub messages: Vec<ChatMessage>,
@@ -315,7 +324,6 @@ impl Default for AppState {
             show_profile_modal: false,
             profile_in_progress: false,
             profile_error: None,
-            profile_upload_rx: None,
             media_in_progress: false,
             media_rx: None,
             session_refresh_rx,

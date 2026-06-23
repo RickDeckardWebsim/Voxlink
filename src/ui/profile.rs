@@ -17,25 +17,31 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
         return;
     }
 
-    // Poll for profile picture upload result
+    // Poll for profile picture / username update result
     if let Some(rx) = &state.profile_rx {
         if let Ok(result) = rx.try_recv() {
             state.profile_in_progress = false;
             state.profile_rx = None;
-            
+
             match result {
-                Ok(Some(url)) => {
+                Ok(r) => {
                     if let Some(mut session) = state.session.take() {
-                        // Bust the old cached texture so image_loader re-fetches the new avatar.
-                        if let Some(old_url) = &session.avatar_url {
-                            super::image_loader::invalidate(old_url);
+                        // If the upload thread had to refresh our JWT, persist the new tokens.
+                        if let Some((at, rt)) = r.new_tokens {
+                            session.access_token  = at;
+                            session.refresh_token = rt;
                         }
-                        session.avatar_url = Some(url);
+                        if let Some(url) = r.avatar_url {
+                            // Bust old cached texture so image_loader re-fetches the new avatar.
+                            if let Some(old_url) = &session.avatar_url {
+                                super::image_loader::invalidate(old_url);
+                            }
+                            session.avatar_url = Some(url);
+                        }
                         session.save();
                         state.session = Some(session);
                     }
                 }
-                Ok(None) => {} // Just a username update
                 Err(e) => {
                     state.profile_error = Some(e);
                 }
@@ -152,23 +158,34 @@ fn upload_avatar(state: &mut AppState, ctx: &egui::Context, path: &Path) {
     let ctx_clone = ctx.clone();
     
     thread::spawn(move || {
-        let result = match fs::read(&path_buf) {
+        let result: Result<crate::state::ProfileUploadResult, String> = match fs::read(&path_buf) {
             Ok(bytes) => {
-                match supabase::upload_avatar(&session.user_id, &session.access_token, bytes, &ext) {
-                    Ok(url) => {
-                        // Update profile with new avatar URL
-                        if let Err(e) = supabase::update_profile(&session.user_id, &session.access_token, &session.username, Some(&url)) {
+                match supabase::upload_avatar_auto_refresh(
+                    &session.user_id,
+                    &session.access_token,
+                    &session.refresh_token,
+                    bytes,
+                    &ext,
+                ) {
+                    Ok((url, new_tokens)) => {
+                        // Reuse whichever token is freshest for the profile update
+                        let token = new_tokens.as_ref()
+                            .map(|(at, _)| at.as_str())
+                            .unwrap_or(&session.access_token);
+                        if let Err(e) = supabase::update_profile(
+                            &session.user_id, token, &session.username, Some(&url),
+                        ) {
                             Err(e.to_string())
                         } else {
-                            Ok(Some(url))
+                            Ok(crate::state::ProfileUploadResult { avatar_url: Some(url), new_tokens })
                         }
                     }
-                    Err(e) => Err(e.to_string())
+                    Err(e) => Err(e.to_string()),
                 }
             }
-            Err(e) => Err(format!("Failed to read file: {}", e)),
+            Err(e) => Err(format!("Could not read file: {}", e)),
         };
-        
+
         let _ = tx.send(result);
         ctx_clone.request_repaint();
     });
@@ -193,14 +210,16 @@ fn save_profile(state: &mut AppState, ctx: &egui::Context) {
     let session_clone = session.clone();
     
     thread::spawn(move || {
-        match supabase::update_profile(&session_clone.user_id, &session_clone.access_token, &new_username_clone, session_clone.avatar_url.as_deref()) {
-            Ok(_) => {
-                let _ = tx.send(Ok(None)); // None means just username updated
-            }
-            Err(e) => {
-                let _ = tx.send(Err(e.to_string()));
-            }
-        }
+        let result = supabase::update_profile(
+            &session_clone.user_id,
+            &session_clone.access_token,
+            &new_username_clone,
+            session_clone.avatar_url.as_deref(),
+        )
+        .map(|_| crate::state::ProfileUploadResult { avatar_url: None, new_tokens: None })
+        .map_err(|e| e.to_string());
+
+        let _ = tx.send(result);
         ctx_clone.request_repaint();
     });
     

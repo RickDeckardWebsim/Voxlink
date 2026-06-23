@@ -392,6 +392,14 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
         state.media_rx = None;
         match result {
             Ok(r) => {
+                // Persist refreshed tokens back into the session so future uploads don't retry.
+                if let Some(ref mut s) = state.session {
+                    if let Some((at, rt)) = r.new_tokens {
+                        s.access_token  = at;
+                        s.refresh_token = rt;
+                        s.save();
+                    }
+                }
                 let att = crate::state::Attachment {
                     url:      r.url.clone(),
                     kind:     r.kind.clone(),
@@ -408,7 +416,7 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
                 }
             }
             Err(e) => {
-                state.push_system(format!("Media upload failed: {}", e));
+                state.push_system(format!("Upload failed: {}", e));
             }
         }
         ctx.request_repaint();
@@ -448,18 +456,21 @@ fn pick_and_upload_media(state: &mut AppState, ctx: &egui::Context) {
         let kind     = kind_for_ext(&ext);
 
         let result = std::fs::read(&path)
-            .map_err(|e| format!("Failed to read file: {}", e))
+            .map_err(|e| format!("Could not read file: {}", e))
             .and_then(|bytes| {
-                crate::net::supabase::upload_media(
+                crate::net::supabase::upload_media_auto_refresh(
                     &session.user_id,
                     &session.access_token,
+                    &session.refresh_token,
                     bytes,
                     &ext,
                     &filename,
                 )
                 .map_err(|e| e.to_string())
             })
-            .map(|url| crate::state::MediaUploadResult { url, kind, filename, caption });
+            .map(|(url, new_tokens)| crate::state::MediaUploadResult {
+                url, kind, filename, caption, new_tokens,
+            });
 
         let _ = tx.send(result);
         ctx_clone.request_repaint();
