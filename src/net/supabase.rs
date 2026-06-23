@@ -26,6 +26,34 @@ pub struct Profile {
     pub avatar_url: Option<String>,
 }
 
+/// Exchange a refresh token for a fresh access + refresh token pair.
+/// Call this on startup when a saved session is found; Supabase access tokens
+/// expire after 1 hour by default.
+pub fn refresh_session(refresh_token: &str) -> Result<(String, String)> {
+    let client = Client::new();
+    let url = format!("{}/auth/v1/token?grant_type=refresh_token", BASE_URL);
+
+    let res = client.post(&url)
+        .header("apikey", ANON_KEY)
+        .header("Content-Type", "application/json")
+        .json(&json!({ "refresh_token": refresh_token }))
+        .send()?;
+
+    if !res.status().is_success() {
+        let body = res.text().unwrap_or_default();
+        return Err(anyhow::anyhow!("Token refresh failed: {}", body));
+    }
+
+    let parsed: serde_json::Value = res.json()?;
+    let access  = parsed["access_token"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("No access_token in refresh response"))?
+        .to_string();
+    let refresh = parsed["refresh_token"].as_str()
+        .unwrap_or(refresh_token)
+        .to_string();
+    Ok((access, refresh))
+}
+
 pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthResponse> {
     let client = Client::new();
     let url = format!("{}/auth/v1/signup?apikey={}", BASE_URL, ANON_KEY);

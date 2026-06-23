@@ -244,6 +244,10 @@ pub struct AppState {
     pub media_in_progress: bool,
     pub media_rx: Option<std::sync::mpsc::Receiver<Result<MediaUploadResult, String>>>,
 
+    // ── Token refresh ──
+    // Background refresh of the Supabase JWT on startup; result is (access_token, refresh_token).
+    pub session_refresh_rx: Option<std::sync::mpsc::Receiver<Result<(String, String), String>>>,
+
     // ── Updater ──
     pub updater_tx: std::sync::mpsc::Sender<crate::net::updater::UpdaterEvent>,
     pub updater_rx: std::sync::mpsc::Receiver<crate::net::updater::UpdaterEvent>,
@@ -279,10 +283,23 @@ impl Default for AppState {
     fn default() -> Self {
         let session = Session::load();
         let (updater_tx, updater_rx) = std::sync::mpsc::channel();
-        
+
         // Kick off update check
         crate::net::updater::check_for_updates(updater_tx.clone());
-        
+
+        // If a saved session exists, immediately refresh the access token in the background.
+        // Supabase JWTs expire after ~1 hour; the refresh token lasts much longer.
+        let session_refresh_rx = session.as_ref().map(|s| {
+            let rt = s.refresh_token.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let result = crate::net::supabase::refresh_session(&rt)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(result);
+            });
+            rx
+        });
+
         let mut state = Self {
             screen: if session.is_some() { Screen::Chat } else { Screen::Login },
             is_registering: false,
@@ -301,6 +318,7 @@ impl Default for AppState {
             profile_upload_rx: None,
             media_in_progress: false,
             media_rx: None,
+            session_refresh_rx,
             updater_tx,
             updater_rx,
             update_available_version: None,

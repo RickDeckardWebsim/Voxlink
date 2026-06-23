@@ -62,6 +62,32 @@ impl eframe::App for VoxLinkApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
+        // ── Poll background token refresh ─────────────────────────────────────
+        let refresh_result = self.state.session_refresh_rx
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok());
+        if let Some(result) = refresh_result {
+            self.state.session_refresh_rx = None;
+            match result {
+                Ok((access_token, refresh_token)) => {
+                    if let Some(ref mut s) = self.state.session {
+                        s.access_token  = access_token;
+                        s.refresh_token = refresh_token;
+                        s.save();
+                        log::info!("[app] Session token refreshed successfully.");
+                    }
+                }
+                Err(e) => {
+                    // Refresh token itself expired — force re-login.
+                    log::warn!("[app] Token refresh failed ({}); signing out.", e);
+                    crate::state::Session::clear();
+                    self.state.session = None;
+                    self.state.screen  = crate::state::Screen::Login;
+                    self.state.push_system("Session expired. Please sign in again.");
+                }
+            }
+        }
+
         // ── Spawn signaling on first frame after login ─────────────────────────
         if self.state.needs_connect {
             self.state.needs_connect = false;

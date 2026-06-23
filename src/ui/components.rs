@@ -155,7 +155,7 @@ fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
                 let sized = egui::load::SizedTexture::new(tex.id(), display);
                 ui.add(egui::Image::new(sized));
             } else {
-                ui.label(RichText::new("⏳ Loading image…").size(13.0).color(theme::TEXT_MUTED));
+                ui.label(RichText::new("Loading image…").size(13.0).color(theme::TEXT_MUTED));
             }
         }
         crate::state::AttachmentKind::Audio => {
@@ -165,7 +165,8 @@ fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
                 .inner_margin(egui::Margin::symmetric(12i8, 8i8))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🎵").size(16.0));
+                        // "♪" is U+266A, well within the BMP and present in most fonts
+                        ui.label(RichText::new("\u{266A} Audio").size(13.0).color(theme::TEXT_MUTED));
                         ui.add_space(6.0);
                         ui.add(
                             egui::Label::new(
@@ -188,7 +189,8 @@ fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
                 .inner_margin(egui::Margin::symmetric(12i8, 8i8))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🎬").size(16.0));
+                        // "▶" is U+25B6, present in all standard fonts
+                        ui.label(RichText::new("\u{25B6} Video").size(13.0).color(theme::TEXT_MUTED));
                         ui.add_space(6.0);
                         ui.add(
                             egui::Label::new(

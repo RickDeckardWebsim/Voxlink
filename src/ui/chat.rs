@@ -341,20 +341,18 @@ fn render_input_bar(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState
                     if state.media_in_progress {
                         ui.spinner();
                     } else {
+                        // "+" is universally renderable; tooltip clarifies it's for attachments
                         let attach = ui.add(
                             egui::Button::new(
-                                RichText::new("📎").size(16.0).color(theme::TEXT_MUTED),
+                                RichText::new("+").size(20.0).color(theme::TEXT_MUTED).strong(),
                             )
                             .fill(Color32::TRANSPARENT)
                             .stroke(egui::Stroke::NONE)
                             .corner_radius(CornerRadius::same(4u8)),
-                        );
-                        if attach.hovered() {
-                            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                        if attach.clicked() {
-                            pick_and_upload_media(state, ctx);
-                        }
+                        )
+                        .on_hover_text("Attach image, audio, or video");
+                        if attach.hovered() { ctx.set_cursor_icon(egui::CursorIcon::PointingHand); }
+                        if attach.clicked() { pick_and_upload_media(state, ctx); }
                     }
                     ui.add_space(6.0);
 
