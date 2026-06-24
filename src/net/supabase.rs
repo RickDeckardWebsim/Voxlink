@@ -349,6 +349,148 @@ pub fn upload_media_auto_refresh(
     }
 }
 
+// ── Chat message persistence ──────────────────────────────────────────────────
+//
+// Required Supabase table (run once in the SQL editor):
+//
+//   CREATE TABLE IF NOT EXISTS messages (
+//     id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+//     channel          TEXT        NOT NULL DEFAULT 'general',
+//     from_user        TEXT        NOT NULL,
+//     content          TEXT        NOT NULL DEFAULT '',
+//     attachment_url   TEXT,
+//     attachment_kind  TEXT,
+//     attachment_filename TEXT,
+//     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+//   );
+//   ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+//   CREATE POLICY "msg_read"   ON messages FOR SELECT USING (true);
+//   CREATE POLICY "msg_insert" ON messages FOR INSERT TO authenticated WITH CHECK (true);
+//   CREATE INDEX messages_channel_time ON messages (channel, created_at DESC);
+
+#[derive(Deserialize)]
+struct DbMessage {
+    from_user:           String,
+    content:             String,
+    attachment_url:      Option<String>,
+    attachment_kind:     Option<String>,
+    attachment_filename: Option<String>,
+    created_at:          String,
+}
+
+/// Insert a sent message into the `messages` table (fire-and-forget).
+/// Failures are logged as warnings; they don't block the local send.
+pub fn insert_message(
+    access_token: &str,
+    from_user: &str,
+    content: &str,
+    attachment: Option<&crate::state::Attachment>,
+) -> Result<()> {
+    let client  = Client::new();
+    let url     = format!("{}/rest/v1/messages", BASE_URL);
+
+    let mut body = json!({
+        "channel":   "general",
+        "from_user": from_user,
+        "content":   content,
+    });
+
+    if let Some(att) = attachment {
+        let kind_str = match att.kind {
+            crate::state::AttachmentKind::Image => "image",
+            crate::state::AttachmentKind::Audio => "audio",
+            crate::state::AttachmentKind::Video => "video",
+        };
+        body["attachment_url"]      = json!(att.url);
+        body["attachment_kind"]     = json!(kind_str);
+        body["attachment_filename"] = json!(att.filename);
+    }
+
+    let res = client.post(&url)
+        .header("apikey",         ANON_KEY)
+        .header("Authorization",  format!("Bearer {}", access_token))
+        .header("Content-Type",   "application/json")
+        .header("Prefer",         "return=minimal")
+        .json(&body)
+        .send()?;
+
+    if !res.status().is_success() {
+        let err = res.text().unwrap_or_default();
+        log::warn!("[supabase] message insert failed: {}", err);
+    }
+    Ok(())
+}
+
+/// Fetch the 100 most-recent messages from the `messages` table.
+/// Returns them in chronological order (oldest first).
+pub fn fetch_recent_messages(
+    access_token: &str,
+    local_username: &str,
+) -> Result<Vec<crate::state::ChatMessage>> {
+    let client = Client::new();
+    let url = format!(
+        "{}/rest/v1/messages?channel=eq.general&order=created_at.desc&limit=100",
+        BASE_URL
+    );
+
+    let res = client.get(&url)
+        .header("apikey",        ANON_KEY)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()?;
+
+    if !res.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "History fetch failed ({})", res.status()
+        ));
+    }
+
+    let rows: Vec<DbMessage> = res.json()?;
+
+    // API returns newest-first; reverse for chronological order
+    let messages: Vec<crate::state::ChatMessage> = rows.into_iter().rev().map(|row| {
+        let kind = if row.from_user == local_username {
+            crate::state::MessageKind::Own
+        } else {
+            crate::state::MessageKind::Peer
+        };
+
+        let attachment = match (row.attachment_url, row.attachment_kind, row.attachment_filename) {
+            (Some(url), Some(kind_str), Some(filename)) => {
+                let att_kind = match kind_str.as_str() {
+                    "audio" => crate::state::AttachmentKind::Audio,
+                    "video" => crate::state::AttachmentKind::Video,
+                    _       => crate::state::AttachmentKind::Image,
+                };
+                Some(crate::state::Attachment { url, kind: att_kind, filename })
+            }
+            _ => None,
+        };
+
+        crate::state::ChatMessage {
+            id:         0, // Reassigned by the caller using next_message_id
+            author:     row.from_user,
+            content:    row.content,
+            timestamp:  iso_to_hhmm(&row.created_at),
+            kind,
+            attachment,
+            unix_ts:    0, // History messages never expire
+        }
+    }).collect();
+
+    Ok(messages)
+}
+
+/// Convert an ISO 8601 timestamp to "HH:MM" for display.
+fn iso_to_hhmm(iso: &str) -> String {
+    if let Some(time_part) = iso.split('T').nth(1) {
+        let parts: Vec<&str> = time_part.split(':').collect();
+        if parts.len() >= 2 {
+            return format!("{}:{}", parts[0], parts[1]);
+        }
+    }
+    "??:??".to_string()
+}
+
 fn mime_for_ext(ext: &str) -> &'static str {
     match ext.to_lowercase().as_str() {
         "png"          => "image/png",

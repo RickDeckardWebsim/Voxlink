@@ -79,6 +79,11 @@ pub struct ChatMessage {
     pub timestamp: String,
     pub kind: MessageKind,
     pub attachment: Option<Attachment>,
+    /// Unix epoch seconds of creation.
+    /// System messages (join/leave) use this to drive the 2-hour auto-prune.
+    /// Persistent messages (Own/Peer) set this to 0 — they never expire.
+    #[serde(default)]
+    pub unix_ts: u64,
 }
 
 impl ChatMessage {
@@ -95,6 +100,7 @@ impl ChatMessage {
             timestamp: timestamp_now(),
             kind: MessageKind::Own,
             attachment,
+            unix_ts: 0,
         }
     }
 
@@ -111,6 +117,7 @@ impl ChatMessage {
             timestamp: timestamp_now(),
             kind: MessageKind::Peer,
             attachment,
+            unix_ts: 0,
         }
     }
 
@@ -122,8 +129,17 @@ impl ChatMessage {
             timestamp: timestamp_now(),
             kind: MessageKind::System,
             attachment: None,
+            unix_ts: unix_now(),
         }
     }
+}
+
+/// Unix epoch seconds — used for system-message age checks.
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 // ── Peers ─────────────────────────────────────────────────────────────────────
@@ -260,6 +276,10 @@ pub struct AppState {
     // Background refresh of the Supabase JWT on startup; result is (access_token, refresh_token).
     pub session_refresh_rx: Option<std::sync::mpsc::Receiver<Result<(String, String), String>>>,
 
+    // ── Chat history ──
+    // One-shot receiver for the history fetch that fires on connect.
+    pub history_rx: Option<std::sync::mpsc::Receiver<Result<Vec<ChatMessage>, String>>>,
+
     // ── Updater ──
     pub updater_tx: std::sync::mpsc::Sender<crate::net::updater::UpdaterEvent>,
     pub updater_rx: std::sync::mpsc::Receiver<crate::net::updater::UpdaterEvent>,
@@ -334,6 +354,7 @@ impl Default for AppState {
             media_in_progress: false,
             media_rx: None,
             session_refresh_rx,
+            history_rx: None,
             updater_tx,
             updater_rx,
             update_available_version: None,
@@ -419,6 +440,38 @@ impl AppState {
             }
         }
         
+        // Poll chat history (one-shot, fires once after connect)
+        if let Some(result) = self.history_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.history_rx = None;
+            did_work = true;
+            match result {
+                Ok(mut history) if !history.is_empty() => {
+                    let n = history.len();
+                    // Assign fresh widget IDs that don't collide with already-used ones
+                    for msg in &mut history {
+                        msg.id = self.next_message_id;
+                        self.next_message_id += 1;
+                    }
+                    // Prepend history so it appears before any live/system messages
+                    let tail: Vec<ChatMessage> = self.messages.drain(..).collect();
+                    self.messages = history;
+                    self.messages.extend(tail);
+                    self.scroll_to_bottom = true;
+                    log::info!("[history] Prepended {} messages from history", n);
+                }
+                Ok(_)  => log::info!("[history] No prior messages in this channel"),
+                Err(e) => log::warn!("[history] Load failed: {}", e),
+            }
+        }
+
+        // Prune system messages (join / leave notifications) older than 2 hours
+        let now = unix_now();
+        self.messages.retain(|m| {
+            m.kind != MessageKind::System
+                || m.unix_ts == 0
+                || now.saturating_sub(m.unix_ts) < 7200
+        });
+
         // Also poll updater events
         while let Ok(event) = self.updater_rx.try_recv() {
             did_work = true;

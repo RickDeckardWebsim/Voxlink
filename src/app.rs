@@ -177,6 +177,20 @@ impl AppState {
         match event {
             NetEvent::Connected => {
                 self.push_system("Connected to VoxLink signaling. Waiting for peers…");
+                // Fetch chat history in the background so the user sees prior messages
+                // immediately after connecting without blocking the UI.
+                if let Some(ref s) = self.session {
+                    let access_token = s.access_token.clone();
+                    let username     = self.username.clone();
+                    let (tx, rx)     = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let result = crate::net::supabase::fetch_recent_messages(
+                            &access_token, &username,
+                        ).map_err(|e| e.to_string());
+                        let _ = tx.send(result);
+                    });
+                    self.history_rx = Some(rx);
+                }
             }
 
             NetEvent::Disconnected => {

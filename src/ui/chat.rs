@@ -558,10 +558,25 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
                 state.push_own_media(r.caption.clone(), Some(att.clone()));
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(crate::state::UiCommand::SendMedia {
-                        caption:  r.caption,
-                        url:      att.url,
-                        kind:     att.kind,
-                        filename: att.filename,
+                        caption:  r.caption.clone(),
+                        url:      att.url.clone(),
+                        kind:     att.kind.clone(),
+                        filename: att.filename.clone(),
+                    });
+                }
+
+                // Persist media message to DB (fire-and-forget)
+                if let Some(ref s) = state.session {
+                    let at      = s.access_token.clone();
+                    let from    = state.username.clone();
+                    let caption = r.caption.clone();
+                    let att_db  = att.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = crate::net::supabase::insert_message(
+                            &at, &from, &caption, Some(&att_db),
+                        ) {
+                            log::warn!("[chat] DB insert (media) failed: {}", e);
+                        }
                     });
                 }
             }
@@ -639,17 +654,24 @@ fn kind_for_ext(ext: &str) -> crate::state::AttachmentKind {
 
 fn try_send_message(state: &mut AppState) {
     let content = state.message_input.trim().to_string();
-    if content.is_empty() {
-        return;
-    }
+    if content.is_empty() { return; }
     state.message_input.clear();
 
-    // Phase 2: route through signaling task → Supabase broadcast → peers
-    // Phase 3: this will change to cmd_tx.send(UiCommand::SendMessage) → P2P data channel
     if let Some(tx) = &state.cmd_tx {
         let _ = tx.send(crate::state::UiCommand::SendMessage(content.clone()));
     }
 
-    // Always show own message locally (optimistic UI — sender doesn't receive own broadcast)
-    state.push_own(content);
+    // Show locally (optimistic — sender doesn't receive own broadcast)
+    state.push_own(content.clone());
+
+    // Persist to DB (fire-and-forget — failures are logged, never block the UI)
+    if let Some(ref s) = state.session {
+        let at   = s.access_token.clone();
+        let from = state.username.clone();
+        thread::spawn(move || {
+            if let Err(e) = crate::net::supabase::insert_message(&at, &from, &content, None) {
+                log::warn!("[chat] DB insert failed: {}", e);
+            }
+        });
+    }
 }
