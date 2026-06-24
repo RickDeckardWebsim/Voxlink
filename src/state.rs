@@ -287,9 +287,30 @@ pub struct AppState {
     // ── Updater ──
     pub updater_tx: std::sync::mpsc::Sender<crate::net::updater::UpdaterEvent>,
     pub updater_rx: std::sync::mpsc::Receiver<crate::net::updater::UpdaterEvent>,
+    /// Version string of the latest available release, if newer than current.
     pub update_available_version: Option<String>,
+    /// Release notes markdown from GitHub.
+    pub update_release_notes: Option<String>,
+    /// Direct download URL for the release asset (set when UpdateAvailable arrives).
+    pub update_asset_url: Option<String>,
+    /// Total byte size of the release asset.
+    pub update_asset_size: u64,
+    /// Bytes downloaded so far during an active update.
+    pub update_download_progress: u64,
+    /// Total bytes expected for the current download.
+    pub update_download_total: u64,
+    /// Human-readable phase text ("Downloading...", "Extracting...", etc.)
+    pub update_phase: String,
+    /// Whether a download + install is currently running.
     pub update_in_progress: bool,
+    /// Error text from a failed update attempt.
     pub update_error: Option<String>,
+    /// Whether the update modal is open.
+    pub show_update_modal: bool,
+    /// Whether a check is currently in flight (prevents duplicate requests).
+    pub update_check_in_progress: bool,
+    /// Timestamp of the last completed check — used for periodic 30-min re-checks.
+    pub last_update_check: std::time::Instant,
     pub profile_rx: Option<std::sync::mpsc::Receiver<Result<ProfileUploadResult, String>>>,
 
     // ── Chat ──
@@ -362,8 +383,17 @@ impl Default for AppState {
             updater_tx,
             updater_rx,
             update_available_version: None,
+            update_release_notes: None,
+            update_asset_url: None,
+            update_asset_size: 0,
+            update_download_progress: 0,
+            update_download_total: 0,
+            update_phase: String::new(),
             update_in_progress: false,
             update_error: None,
+            show_update_modal: false,
+            update_check_in_progress: true, // a check fires immediately in Default
+            last_update_check: std::time::Instant::now(),
             profile_rx: None,
             messages: Vec::new(),
             message_input: String::new(),
@@ -476,22 +506,63 @@ impl AppState {
                 || now.saturating_sub(m.unix_ts) < 7200
         });
 
-        // Also poll updater events
+        // Poll updater events
         while let Ok(event) = self.updater_rx.try_recv() {
             did_work = true;
+            use crate::net::updater::UpdaterEvent as UE;
             match event {
-                crate::net::updater::UpdaterEvent::UpdateAvailable(version) => {
-                    self.update_available_version = Some(version);
+                UE::CheckStarted => {
+                    self.update_check_in_progress = true;
                 }
-                crate::net::updater::UpdaterEvent::UpdateFinished => {
-                    self.update_in_progress = false;
-                    // App should restart momentarily
+                UE::UpdateAvailable(info) => {
+                    self.update_check_in_progress = false;
+                    self.last_update_check = std::time::Instant::now();
+                    self.update_available_version = Some(info.version);
+                    self.update_release_notes     = Some(info.notes);
+                    self.update_asset_url         = Some(info.asset_url);
+                    self.update_asset_size        = info.asset_size;
+                    // Badge appears in sidebar; modal stays closed until user clicks
                 }
-                crate::net::updater::UpdaterEvent::UpdateFailed(err) => {
+                UE::AlreadyUpToDate => {
+                    self.update_check_in_progress = false;
+                    self.last_update_check = std::time::Instant::now();
+                }
+                UE::CheckFailed(e) => {
+                    self.update_check_in_progress = false;
+                    self.last_update_check = std::time::Instant::now();
+                    log::warn!("[updater] Check failed: {}", e);
+                }
+                UE::Phase(text) => {
+                    self.update_phase = text;
+                }
+                UE::DownloadProgress { downloaded, total } => {
+                    self.update_download_progress = downloaded;
+                    self.update_download_total    = total;
+                }
+                UE::Finished => {
+                    // The process replaces itself and exits; this branch is a
+                    // safety net in case the restart path is skipped somehow.
                     self.update_in_progress = false;
-                    self.update_error = Some(err);
+                }
+                UE::Failed(e) => {
+                    self.update_in_progress       = false;
+                    self.update_download_progress = 0;
+                    self.update_phase             = String::new();
+                    self.update_error             = Some(e);
                 }
             }
+        }
+
+        // Periodic update check — fires every 30 minutes while the app is running.
+        // Only runs if no check is already in flight and no update is waiting.
+        let check_interval = std::time::Duration::from_secs(30 * 60);
+        if !self.update_check_in_progress
+            && self.update_available_version.is_none()
+            && self.last_update_check.elapsed() > check_interval
+        {
+            self.update_check_in_progress = true;
+            self.last_update_check        = std::time::Instant::now();
+            crate::net::updater::check_for_updates(self.updater_tx.clone());
         }
 
         did_work

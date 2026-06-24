@@ -133,7 +133,54 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
                     });
                 }
                 
-                ui.add_space(24.0);
+                ui.add_space(16.0);
+
+                // ── App management row ───────────────────────────────────────
+                ui.horizontal(|ui| {
+                    let check_label = if state.update_check_in_progress {
+                        "Checking..."
+                    } else if state.update_available_version.is_some() {
+                        "Update available"
+                    } else {
+                        "Check for updates"
+                    };
+                    let update_btn = ui.add_enabled(
+                        !state.update_check_in_progress,
+                        egui::Button::new(
+                            RichText::new(check_label)
+                                .size(13.0)
+                                .color(if state.update_available_version.is_some() {
+                                    Color32::from_rgb(240, 180, 60)
+                                } else {
+                                    theme::TEXT_MUTED
+                                }),
+                        )
+                        .frame(false),
+                    );
+                    if update_btn.clicked() {
+                        if state.update_available_version.is_some() {
+                            state.show_update_modal  = true;
+                            state.show_profile_modal = false;
+                        } else {
+                            state.update_check_in_progress = true;
+                            state.last_update_check        = std::time::Instant::now();
+                            crate::net::updater::check_for_updates(state.updater_tx.clone());
+                        }
+                    }
+                    if state.update_check_in_progress {
+                        ui.add(egui::widgets::Spinner::new().size(12.0).color(theme::TEXT_MUTED));
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                .size(11.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    });
+                });
+
+                ui.add_space(12.0);
                 if ui.button(RichText::new("Sign Out").color(theme::RED_DANGER)).clicked() {
                     crate::state::Session::clear();
                     state.session = None;

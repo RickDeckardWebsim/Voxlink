@@ -6,7 +6,7 @@ use egui::{Color32, CornerRadius, Frame, Key, Margin, RichText, ScrollArea, Vec2
 use std::thread;
 
 use crate::state::{AppState, MessageKind};
-use super::{components, theme};
+use super::{components, theme, updater as update_ui};
 
 #[allow(deprecated)] // egui 0.34: Panel::show still works, show_inside() is new preferred API
 pub fn render(ctx: &egui::Context, state: &mut AppState) {
@@ -20,41 +20,8 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
             render_sidebar(ui, state);
         });
 
-    // ── Update Banner (optional, top) ────────────────────────────────────────
-    if let Some(ref version) = state.update_available_version {
-        egui::TopBottomPanel::top("update_banner")
-            .exact_size(40.0)
-            .frame(
-                Frame::default()
-                    .fill(Color32::from_rgb(45, 120, 60))
-                    // Symmetric vertical margin so text is vertically centred and
-                    // has SAFE_MARGIN clearance from the window top edge.
-                    .inner_margin(Margin { left: 16, right: 16, top: theme::SAFE_MARGIN as i8, bottom: theme::SAFE_MARGIN as i8 }),
-            )
-            .show(ctx, |ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if state.update_in_progress {
-                        ui.spinner();
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Downloading update...").color(Color32::WHITE).strong());
-                    } else if let Some(ref err) = state.update_error {
-                        ui.label(RichText::new(format!("Update failed: {}", err)).color(theme::RED_DANGER).strong());
-                    } else {
-                        let btn = ui.add(
-                            egui::Button::new(RichText::new("Update Now").color(Color32::WHITE).strong())
-                                .fill(theme::BLURPLE)
-                                .corner_radius(CornerRadius::same(4))
-                        );
-                        if btn.clicked() {
-                            state.update_in_progress = true;
-                            crate::net::updater::run_update(state.updater_tx.clone());
-                        }
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(format!("Version {} is available!", version)).color(Color32::WHITE).strong());
-                    }
-                });
-            });
-    }
+    // ── Update modal (rendered above everything else) ─────────────────────────
+    update_ui::render_update_modal(ctx, state);
 
     // ── 2. Channel header (top) ───────────────────────────────────────────────
     // Vertical inner_margin centers the row and keeps it 14 px from the panel
@@ -167,6 +134,23 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                 );
             }
             ui.add_space(12.0);
+
+            // ── Update badge (above profile bar) ─────────────────────────────
+            if state.update_available_version.is_some() || state.update_check_in_progress {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    egui::Frame::NONE
+                        .outer_margin(Margin { left: 0, right: 8, top: 0, bottom: 0 })
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            if update_ui::render_sidebar_badge(ui, state) {
+                                state.show_update_modal = true;
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+            }
         });
 
     // Push profile bar to the very bottom
