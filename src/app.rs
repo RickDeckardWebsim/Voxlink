@@ -189,7 +189,9 @@ impl AppState {
                     self.peers.push(PeerInfo {
                         username: username.clone(),
                         avatar_url: None,
-                        voice_active: false,
+                        in_voice: false,
+                        is_speaking: false,
+                        is_muted: false,
                         peer_id: None,
                     });
                 }
@@ -207,6 +209,19 @@ impl AppState {
 
             NetEvent::Error(msg) => {
                 self.push_system(format!("Signaling error: {}", msg));
+            }
+
+            NetEvent::VoiceStateUpdate { from, speaking, muted, in_voice } => {
+                if from == self.username {
+                    // Reflect own state back (e.g. from the capture thread echo).
+                    self.is_speaking = speaking;
+                } else {
+                    if let Some(peer) = self.peers.iter_mut().find(|p| p.username == from) {
+                        peer.is_speaking = speaking;
+                        peer.is_muted    = muted;
+                        peer.in_voice    = in_voice;
+                    }
+                }
             }
         }
     }

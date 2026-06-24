@@ -133,9 +133,12 @@ impl ChatMessage {
 pub struct PeerInfo {
     pub username: String,
     pub avatar_url: Option<String>,
-    /// Whether this peer has their microphone active (Phase 4).
-    pub voice_active: bool,
-    /// WebRTC peer ID assigned at connection (Phase 3).
+    /// Whether this peer has joined the voice channel.
+    pub in_voice: bool,
+    /// Whether this peer is currently producing audio above the speaking threshold.
+    pub is_speaking: bool,
+    /// Whether this peer has muted their microphone.
+    pub is_muted: bool,
     #[allow(dead_code)]
     pub peer_id: Option<String>,
 }
@@ -200,21 +203,21 @@ pub enum NetEvent {
     Disconnected,
     /// A recoverable error occurred.
     Error(String),
+    /// A peer's voice state changed (speaking, muted, joined/left voice).
+    VoiceStateUpdate { from: String, speaking: bool, muted: bool, in_voice: bool },
 }
 
 /// Commands sent FROM the egui UI thread TO the async network task.
 #[derive(Debug)]
-#[allow(dead_code)] // wired in Phase 2
+#[allow(dead_code)]
 pub enum UiCommand {
-    /// Start connecting with the given username.
     Connect { username: String },
-    /// Send a P2P text message to all peers.
     SendMessage(String),
-    /// Send a media attachment (already uploaded to storage) to all peers.
     SendMedia { caption: String, url: String, kind: AttachmentKind, filename: String },
-    /// Toggle the local microphone (Phase 4).
+    /// Join (true) or leave (false) the voice channel.
     ToggleVoice(bool),
-    /// Gracefully disconnect.
+    /// Mute (true) or unmute (false) the local microphone while remaining in voice.
+    SetMuted(bool),
     Disconnect,
 }
 
@@ -274,6 +277,10 @@ pub struct AppState {
 
     // ── Voice ──
     pub voice_active: bool,
+    /// Whether the local mic is muted (audio still captured, but not transmitted).
+    pub is_muted: bool,
+    /// Whether the local user is currently speaking (from audio RMS detection).
+    pub is_speaking: bool,
 
     /// Set true by commit_login; consumed by app.rs to spawn the signaling task.
     pub needs_connect: bool,
@@ -338,6 +345,8 @@ impl Default for AppState {
             next_message_id: 0,
             scroll_to_bottom: false,
             voice_active: false,
+            is_muted: false,
+            is_speaking: false,
             needs_connect: false,
             peers: Vec::new(),
             net_rx: None,

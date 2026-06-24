@@ -37,8 +37,7 @@ pub const CORNER_RADIUS: u8 = 8;
 // Minimum gap between any UI element and the window border (≈ 0.2 cm at 96 dpi)
 pub const SAFE_MARGIN: f32 = 8.0;
 // Sidebar bottom section heights — used to compute the scroll area ceiling
-pub const SIDEBAR_BOTTOM_H: f32 = 60.0; // profile bar
-pub const SIDEBAR_VOICE_H:  f32 = 54.0; // voice panel (only when voice_active)
+pub const SIDEBAR_BOTTOM_H: f32 = 60.0; // profile bar height
 
 // ── Avatar Colors ─────────────────────────────────────────────────────────────
 

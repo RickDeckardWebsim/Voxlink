@@ -73,8 +73,18 @@ pub async fn run(
     let mut rtp_counter = 0;
     let mut mic_active = false;
     
-    let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let (mic_tx, mut mic_rx)     = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let (level_tx, mut level_rx) = tokio::sync::mpsc::unbounded_channel::<f32>();
     let mut speaker_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>> = None;
+
+    // Voice / speaking state
+    let mut is_muted         = false;
+    let mut in_voice         = false;
+    let mut is_speaking      = false;
+    let mut last_speak_tx    = Instant::now();
+    let mut silence_frames   = 0u32;
+    const SPEAKING_THRESHOLD: f32  = 0.008; // RMS above this → speaking
+    const SILENCE_HOLD_FRAMES: u32 = 15;   // ~300 ms of silence before clearing speaking flag
 
     loop {
         // 1. Drain str0m output
@@ -88,7 +98,7 @@ pub async fn run(
                         Event::Connected => {
                             log::info!("[webrtc] P2P Connected!");
                             // Start audio streams
-                            if let Ok(()) = start_capture(mic_tx.clone()) {
+                            if let Ok(()) = start_capture(mic_tx.clone(), level_tx.clone()) {
                                 log::info!("[webrtc] Audio capture running.");
                             }
                             if let Ok(tx) = start_playback() {
@@ -151,7 +161,7 @@ pub async fn run(
 
             mic_packet = mic_rx.recv() => {
                 if let Some(packet) = mic_packet {
-                    if mic_active {
+                    if mic_active && !is_muted {
                         if let Some(mid) = audio_mid {
                             if let Some(writer) = rtc.writer(mid) {
                                 let pt = writer.payload_params().next().map(|p| p.pt());
@@ -163,8 +173,40 @@ pub async fn run(
                             }
                         }
                     }
-                    // Always increment counter even if muted to maintain RTP timing
-                    rtp_counter += 960; // 20ms at 48kHz
+                    rtp_counter += 960;
+                }
+            }
+
+            rms = level_rx.recv() => {
+                if let Some(rms) = rms {
+                    if !is_muted && in_voice {
+                        let was_speaking = is_speaking;
+                        if rms > SPEAKING_THRESHOLD {
+                            is_speaking    = true;
+                            silence_frames = 0;
+                        } else {
+                            silence_frames += 1;
+                            if silence_frames >= SILENCE_HOLD_FRAMES {
+                                is_speaking = false;
+                            }
+                        }
+                        // Broadcast immediately on state change, or every 500 ms to keep peers in sync.
+                        if is_speaking != was_speaking || last_speak_tx.elapsed().as_millis() > 500 {
+                            last_speak_tx = Instant::now();
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastVoiceState {
+                                speaking: is_speaking,
+                                muted:    is_muted,
+                                in_voice,
+                            });
+                            let _ = net_tx.send(NetEvent::VoiceStateUpdate {
+                                from:     username.clone(),
+                                speaking: is_speaking,
+                                muted:    is_muted,
+                                in_voice,
+                            });
+                            ctx.request_repaint();
+                        }
+                    }
                 }
             }
 
@@ -180,8 +222,16 @@ pub async fn run(
                                     log::info!("[webrtc] Peer {} joined or was discovered", peer);
                                     known_peers.insert(peer.clone());
                                     
-                                    // Announce our presence back so the new peer discovers us!
+                                    // Announce presence so the new peer discovers us.
                                     let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastPeerJoin);
+                                    // Re-broadcast voice state so the new peer knows if we're in voice.
+                                    if in_voice {
+                                        let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastVoiceState {
+                                            speaking: is_speaking,
+                                            muted:    is_muted,
+                                            in_voice,
+                                        });
+                                    }
                                     
                                     // If our username is lexicographically smaller, we initiate.
                                     if username < peer {
@@ -258,7 +308,40 @@ pub async fn run(
                         }
                         UiCommand::ToggleVoice(active) => {
                             mic_active = active;
-                            log::info!("[webrtc] Voice active: {}", active);
+                            in_voice   = active;
+                            if !active {
+                                is_speaking = false;
+                            }
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastVoiceState {
+                                speaking: false,
+                                muted:    is_muted,
+                                in_voice,
+                            });
+                            let _ = net_tx.send(NetEvent::VoiceStateUpdate {
+                                from:     username.clone(),
+                                speaking: false,
+                                muted:    is_muted,
+                                in_voice,
+                            });
+                            ctx.request_repaint();
+                            log::info!("[webrtc] Voice {}", if active { "joined" } else { "left" });
+                        }
+                        UiCommand::SetMuted(muted) => {
+                            is_muted = muted;
+                            if muted { is_speaking = false; }
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastVoiceState {
+                                speaking: false,
+                                muted:    is_muted,
+                                in_voice,
+                            });
+                            let _ = net_tx.send(NetEvent::VoiceStateUpdate {
+                                from:     username.clone(),
+                                speaking: false,
+                                muted:    is_muted,
+                                in_voice,
+                            });
+                            ctx.request_repaint();
+                            log::info!("[webrtc] Muted: {}", muted);
                         }
                         _ => {}
                     }

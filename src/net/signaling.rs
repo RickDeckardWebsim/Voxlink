@@ -20,6 +20,8 @@ pub enum SigCmd {
     BroadcastPeerJoin,
     BroadcastMessage(String),
     BroadcastMedia { caption: String, url: String, kind: String, filename: String },
+    /// Broadcast this user's microphone/voice state to all peers.
+    BroadcastVoiceState { speaking: bool, muted: bool, in_voice: bool },
     Disconnect,
 }
 
@@ -150,6 +152,16 @@ async fn connect_and_run(
                             }), &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
+                        SigCmd::BroadcastVoiceState { speaking, muted, in_voice } => {
+                            let topic = format!("realtime:{}", CHANNEL);
+                            let broadcast = make_broadcast(&topic, "voice_state", json!({
+                                "from":     username,
+                                "speaking": speaking,
+                                "muted":    muted,
+                                "in_voice": in_voice,
+                            }), &mut ref_count);
+                            send_text(&mut ws_stream, &broadcast).await?;
+                        }
                     }
                 } else {
                     return Ok(true);
@@ -227,6 +239,18 @@ fn handle_incoming(
                         });
                         ctx.request_repaint();
                     }
+                }
+                "voice_state" => {
+                    let speaking = b_payload["speaking"].as_bool().unwrap_or(false);
+                    let muted    = b_payload["muted"].as_bool().unwrap_or(false);
+                    let in_voice = b_payload["in_voice"].as_bool().unwrap_or(false);
+                    let _ = net_tx.send(NetEvent::VoiceStateUpdate {
+                        from: from.to_string(),
+                        speaking,
+                        muted,
+                        in_voice,
+                    });
+                    ctx.request_repaint();
                 }
                 "chat_media" => {
                     let content  = b_payload["content"].as_str().unwrap_or("").to_string();

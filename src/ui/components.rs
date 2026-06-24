@@ -246,7 +246,15 @@ pub fn ghost_button(ui: &mut Ui, label: &str) -> Response {
 
 // ── Sidebar User Row ──────────────────────────────────────────────────────────
 
-pub fn sidebar_user_row(ui: &mut Ui, username: &str, avatar_url: Option<&str>, is_self: bool, voice_active: bool) {
+pub fn sidebar_user_row(
+    ui: &mut Ui,
+    username: &str,
+    avatar_url: Option<&str>,
+    is_self: bool,
+    in_voice: bool,
+    is_speaking: bool,
+    is_muted: bool,
+) {
     egui::Frame::default()
         .fill(Color32::TRANSPARENT)
         .corner_radius(CornerRadius::same(6u8))
@@ -254,24 +262,48 @@ pub fn sidebar_user_row(ui: &mut Ui, username: &str, avatar_url: Option<&str>, i
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let avatar_rect = draw_avatar(ui, username, avatar_url, 28.0);
-                let dot_center  = avatar_rect.right_bottom() + Vec2::new(-2.0, -2.0);
-                draw_status_dot(ui.painter(), dot_center, 5.0, theme::GREEN_ONLINE);
+
+                // Animated speaking ring — fades in/out smoothly.
+                let t = ui.ctx().animate_bool(
+                    egui::Id::new(("speaking_ring", username)),
+                    is_speaking && !is_muted,
+                );
+                if t > 0.0 {
+                    ui.painter().circle_stroke(
+                        avatar_rect.center(),
+                        avatar_rect.width() / 2.0 + 2.5,
+                        egui::Stroke::new(2.5 * t, theme::GREEN_ONLINE),
+                    );
+                }
+
+                // Mute badge — small red circle bottom-right of avatar.
+                if is_muted {
+                    let br = avatar_rect.right_bottom() + Vec2::new(-1.0, -1.0);
+                    ui.painter().circle_filled(br, 6.0, theme::SIDEBAR_BG);
+                    ui.painter().circle_filled(br, 4.5, theme::RED_DANGER);
+                    // Horizontal slash
+                    ui.painter().line_segment(
+                        [br - Vec2::new(2.5, 0.0), br + Vec2::new(2.5, 0.0)],
+                        egui::Stroke::new(1.5, Color32::WHITE),
+                    );
+                } else {
+                    let dot_center = avatar_rect.right_bottom() + Vec2::new(-2.0, -2.0);
+                    draw_status_dot(ui.painter(), dot_center, 5.0, theme::GREEN_ONLINE);
+                }
+
                 ui.add_space(4.0);
 
-                let display = if is_self {
-                    format!("{} (you)", username)
-                } else {
-                    username.to_string()
-                };
+                let display = if is_self { format!("{} (you)", username) } else { username.to_string() };
                 ui.label(
                     RichText::new(display)
                         .size(13.0)
-                        .color(if is_self { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY }),
+                        .color(if is_speaking && !is_muted { theme::GREEN_ONLINE }
+                               else if is_self { theme::TEXT_MUTED }
+                               else { theme::TEXT_PRIMARY }),
                 );
 
-                if voice_active {
+                if in_voice {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // U+25CF BLACK CIRCLE — universally renderable BMP character
                         ui.label(RichText::new("\u{25CF}").size(10.0).color(theme::GREEN_ONLINE));
                     });
                 }

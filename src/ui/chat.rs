@@ -80,7 +80,7 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
-    // App header
+    // ── Server / app header ──────────────────────────────────────────────────
     Frame::default()
         .fill(theme::HEADER_BG)
         .inner_margin(Margin::symmetric(16i8, 14i8))
@@ -92,11 +92,8 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                 if ui.is_rect_visible(lr) {
                     ui.painter().circle_filled(lr.center(), 11.0, theme::BLURPLE);
                     ui.painter().text(
-                        lr.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "V",
-                        egui::FontId::proportional(13.0),
-                        Color32::WHITE,
+                        lr.center(), egui::Align2::CENTER_CENTER, "V",
+                        egui::FontId::proportional(13.0), Color32::WHITE,
                     );
                 }
                 ui.add_space(6.0);
@@ -104,10 +101,8 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             });
         });
 
-    // Scrollable user / channel list — reserve space for bottom control bar
-    let bottom_h = theme::SIDEBAR_BOTTOM_H
-        + if state.voice_active { theme::SIDEBAR_VOICE_H } else { 0.0 };
-    let scroll_max = (ui.available_height() - bottom_h).max(40.0);
+    // ── Scrollable channel + member list ─────────────────────────────────────
+    let scroll_max = (ui.available_height() - theme::SIDEBAR_BOTTOM_H).max(40.0);
     ScrollArea::vertical()
         .id_salt("sidebar_scroll")
         .auto_shrink([false, false])
@@ -116,52 +111,44 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             ui.set_min_width(ui.available_width());
             ui.add_space(8.0);
 
-            sidebar_section_header(ui, "CHANNELS");
+            // ── Text channels ───────────────────────────────────────────────
+            sidebar_section_header(ui, "TEXT CHANNELS");
             sidebar_channel_item(ui, "general", true);
 
             ui.add_space(12.0);
 
+            // ── Voice channels ──────────────────────────────────────────────
+            sidebar_section_header(ui, "VOICE CHANNELS");
+            render_voice_channel(ui, state);
+
+            ui.add_space(12.0);
+
+            // ── Online members ──────────────────────────────────────────────
             let online = state.peers.len() + 1;
-            sidebar_section_header(ui, &format!("ONLINE — {}", online));
-
+            sidebar_section_header(ui, &format!("ONLINE  {}", online));
             ui.add_space(2.0);
-            let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref());
-            components::sidebar_user_row(ui, &state.username, avatar_url, true, state.voice_active);
 
+            let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref());
+            components::sidebar_user_row(
+                ui, &state.username, avatar_url, true,
+                state.voice_active, state.is_speaking, state.is_muted,
+            );
             let peers = state.peers.clone();
             for peer in &peers {
                 ui.add_space(2.0);
-                components::sidebar_user_row(ui, &peer.username, peer.avatar_url.as_deref(), false, peer.voice_active);
+                components::sidebar_user_row(
+                    ui, &peer.username, peer.avatar_url.as_deref(), false,
+                    peer.in_voice, peer.is_speaking, peer.is_muted,
+                );
             }
             ui.add_space(12.0);
         });
 
-    // Push bottom bar to the very bottom
-    let remaining = ui.available_height() - bottom_h;
-    if remaining > 0.0 {
-        ui.add_space(remaining);
-    }
+    // Push profile bar to the very bottom
+    let remaining = ui.available_height() - theme::SIDEBAR_BOTTOM_H;
+    if remaining > 0.0 { ui.add_space(remaining); }
 
-    // Voice connection panel (only visible if active)
-    if state.voice_active {
-        Frame::default()
-            .fill(theme::HEADER_BG)
-            .inner_margin(Margin::symmetric(16i8, 8i8))
-            .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // U+25CF BLACK CIRCLE as a rendered mic indicator (BMP, always available)
-                    ui.label(RichText::new("\u{25CF}").size(14.0).color(theme::GREEN_ONLINE));
-                    ui.add_space(4.0);
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new("Voice Connected").size(13.0).color(theme::GREEN_ONLINE).strong());
-                        ui.label(RichText::new("RTC / P2P").size(11.0).color(theme::TEXT_MUTED));
-                    });
-                });
-            });
-    }
-
-    // Bottom profile bar
+    // ── Bottom profile bar ────────────────────────────────────────────────────
     Frame::default()
         .fill(theme::HEADER_BG)
         .inner_margin(Margin::symmetric(14i8, 12i8))
@@ -173,9 +160,7 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                     components::draw_avatar(ui, &state.username, avatar_url, 32.0);
                     ui.add_space(8.0);
                     ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new(&state.username).size(14.0).color(Color32::WHITE).strong(),
-                        );
+                        ui.label(RichText::new(&state.username).size(14.0).color(Color32::WHITE).strong());
                         ui.horizontal(|ui| {
                             let color = if state.voice_active { theme::GREEN_ONLINE } else { theme::TEXT_PRIMARY };
                             let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
@@ -183,8 +168,7 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                             ui.add_space(2.0);
                             ui.label(
                                 RichText::new(if state.voice_active { "In voice" } else { "Online" })
-                                    .size(11.0)
-                                    .color(theme::TEXT_MUTED),
+                                    .size(11.0).color(theme::TEXT_MUTED),
                             );
                         });
                     });
@@ -196,25 +180,52 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                 if ui.rect_contains_pointer(resp.rect) {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
+            });
+        });
+}
 
-                // Voice Toggle button on the right
+// ── Voice channel block ───────────────────────────────────────────────────────
+
+fn render_voice_channel(ui: &mut egui::Ui, state: &mut AppState) {
+    // Channel row (join / leave)
+    let bg = if state.voice_active { theme::ACTIVE_BG } else { Color32::TRANSPARENT };
+    Frame::default()
+        .fill(bg)
+        .corner_radius(CornerRadius::same(6u8))
+        .inner_margin(Margin { left: 8, right: 8, top: 4, bottom: 4 })
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width() - 16.0);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                // Speaker / connected indicator
+                let (icon_color, name_color) = if state.voice_active {
+                    (theme::GREEN_ONLINE, Color32::WHITE)
+                } else {
+                    (theme::TEXT_MUTED, theme::TEXT_MUTED)
+                };
+                // U+25BA BLACK RIGHT-POINTING POINTER — clean BMP speaker icon
+                ui.label(RichText::new("\u{25BA}").size(11.0).color(icon_color));
+                ui.add_space(4.0);
+                ui.label(RichText::new("General").size(14.0).color(name_color));
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Text labels: "[ ]" = off, "[•]" = live — no supplementary-plane emoji
-                    let (btn_text, btn_color) = if state.voice_active {
-                        ("[End]", theme::RED_DANGER)
+                    let (label, color) = if state.voice_active {
+                        ("Leave", theme::RED_DANGER)
                     } else {
-                        ("[Mic]", theme::TEXT_PRIMARY)
+                        ("Join", theme::GREEN_ONLINE)
                     };
-                    let btn = egui::Button::new(
-                        RichText::new(btn_text).size(13.0).color(btn_color)
-                    ).fill(Color32::TRANSPARENT).stroke(egui::Stroke::NONE).corner_radius(CornerRadius::same(6u8));
-                    
-                    let response = ui.add(btn);
-                    if response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    if response.clicked() {
+                    let btn = ui.add(
+                        egui::Button::new(RichText::new(label).size(11.0).color(color))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::new(1.0, color))
+                            .corner_radius(CornerRadius::same(4u8)),
+                    );
+                    if btn.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                    if btn.clicked() {
                         state.voice_active = !state.voice_active;
+                        if !state.voice_active {
+                            state.is_speaking = false;
+                        }
                         if let Some(tx) = &state.cmd_tx {
                             let _ = tx.send(crate::state::UiCommand::ToggleVoice(state.voice_active));
                         }
@@ -222,6 +233,135 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
                 });
             });
         });
+
+    // Participant list (only when voice is active)
+    if state.voice_active {
+        // Voice status bar above participants
+        Frame::default()
+            .fill(Color32::from_rgba_unmultiplied(35, 165, 90, 18))
+            .corner_radius(CornerRadius::same(4u8))
+            .inner_margin(Margin::symmetric(12i8, 4i8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let t = ui.ctx().animate_bool(egui::Id::new("vc_live_dot"), true);
+                    let dot_color = Color32::from_rgb(
+                        (theme::GREEN_ONLINE.r() as f32 * t) as u8,
+                        (theme::GREEN_ONLINE.g() as f32 * t) as u8,
+                        (theme::GREEN_ONLINE.b() as f32 * t) as u8,
+                    );
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
+                    ui.painter().circle_filled(r.center(), 4.0, dot_color);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Voice Connected  RTC / P2P").size(11.0).color(theme::GREEN_ONLINE));
+                });
+            });
+
+        ui.add_space(2.0);
+
+        // Self participant row
+        let avatar_url = state.session.as_ref().and_then(|s| s.avatar_url.as_deref()).map(str::to_owned);
+        let mute_toggled = render_voice_participant(
+            ui, &state.username, avatar_url.as_deref(), true, state.is_speaking, state.is_muted,
+        );
+        if let Some(new_muted) = mute_toggled {
+            state.is_muted = new_muted;
+            if let Some(tx) = &state.cmd_tx {
+                let _ = tx.send(crate::state::UiCommand::SetMuted(new_muted));
+            }
+        }
+
+        // Peer participant rows
+        let peers = state.peers.clone();
+        for peer in peers.iter().filter(|p| p.in_voice) {
+            ui.add_space(1.0);
+            render_voice_participant(
+                ui, &peer.username, peer.avatar_url.as_deref(), false,
+                peer.is_speaking, peer.is_muted,
+            );
+        }
+    }
+}
+
+/// Renders a single voice participant row.
+/// Returns `Some(new_muted)` when the mute button was clicked (only for self rows).
+fn render_voice_participant(
+    ui: &mut egui::Ui,
+    username: &str,
+    avatar_url: Option<&str>,
+    is_self: bool,
+    is_speaking: bool,
+    is_muted: bool,
+) -> Option<bool> {
+    let mut mute_toggled = None;
+
+    Frame::default()
+        .fill(if is_speaking && !is_muted {
+            Color32::from_rgba_unmultiplied(35, 165, 90, 15)
+        } else {
+            Color32::TRANSPARENT
+        })
+        .corner_radius(CornerRadius::same(4u8))
+        .inner_margin(Margin { left: 24, right: 8, top: 3, bottom: 3 })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let avatar_rect = components::draw_avatar(ui, username, avatar_url, 24.0);
+
+                // Speaking ring — animated fade in/out
+                let t = ui.ctx().animate_bool(
+                    egui::Id::new(("vc_ring", username)),
+                    is_speaking && !is_muted,
+                );
+                if t > 0.0 {
+                    ui.painter().circle_stroke(
+                        avatar_rect.center(),
+                        avatar_rect.width() / 2.0 + 2.5,
+                        egui::Stroke::new(2.5 * t, theme::GREEN_ONLINE),
+                    );
+                }
+
+                ui.add_space(6.0);
+
+                let display = if is_self {
+                    format!("{} (You)", username)
+                } else {
+                    username.to_string()
+                };
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(display)
+                            .size(13.0)
+                            .color(if is_speaking && !is_muted { theme::GREEN_ONLINE } else { Color32::WHITE }),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Truncate),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if is_self {
+                        // Mute toggle button
+                        let (label, color) = if is_muted {
+                            ("[M]", theme::RED_DANGER)
+                        } else {
+                            ("[|]", theme::TEXT_MUTED)
+                        };
+                        let btn = ui.add(
+                            egui::Button::new(RichText::new(label).size(11.0).color(color))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE),
+                        ).on_hover_text(if is_muted { "Unmute" } else { "Mute" });
+                        if btn.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                        if btn.clicked() {
+                            mute_toggled = Some(!is_muted);
+                        }
+                    } else if is_muted {
+                        // Peer mute indicator
+                        ui.label(RichText::new("[M]").size(11.0).color(theme::RED_DANGER))
+                            .on_hover_text(format!("{} is muted", username));
+                    }
+                });
+            });
+        });
+
+    mute_toggled
 }
 
 fn sidebar_section_header(ui: &mut egui::Ui, title: &str) {
