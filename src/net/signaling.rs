@@ -22,6 +22,8 @@ pub enum SigCmd {
     BroadcastMedia { caption: String, url: String, kind: String, filename: String },
     /// Broadcast this user's microphone/voice state to all peers.
     BroadcastVoiceState { speaking: bool, muted: bool, in_voice: bool },
+    /// Broadcast a display-name / avatar change so peers can update their peer list in real time.
+    BroadcastProfileUpdate { new_username: String, avatar_url: Option<String> },
     Disconnect,
 }
 
@@ -163,6 +165,15 @@ async fn connect_and_run(
                             }), &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
+                        SigCmd::BroadcastProfileUpdate { new_username, avatar_url } => {
+                            let topic = format!("realtime:{}", CHANNEL);
+                            let broadcast = make_broadcast(&topic, "profile_update", json!({
+                                "from":         username,
+                                "new_username": new_username,
+                                "avatar_url":   avatar_url,
+                            }), &mut ref_count);
+                            send_text(&mut ws_stream, &broadcast).await?;
+                        }
                     }
                 } else {
                     return Ok(true);
@@ -254,6 +265,17 @@ fn handle_incoming(
                         speaking,
                         muted,
                         in_voice,
+                    });
+                    ctx.request_repaint();
+                }
+                "profile_update" => {
+                    let new_username = b_payload["new_username"].as_str()
+                        .unwrap_or(from).to_owned();
+                    let avatar_url = b_payload["avatar_url"].as_str().map(str::to_owned);
+                    let _ = net_tx.send(NetEvent::ProfileUpdated {
+                        from: from.to_string(),
+                        new_username,
+                        avatar_url,
                     });
                     ctx.request_repaint();
                 }

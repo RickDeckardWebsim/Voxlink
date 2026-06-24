@@ -16,8 +16,8 @@ pub enum SignalingMsg {
 }
 
 pub async fn run(
-    username: String,
-    avatar_url: Option<String>,
+    mut username: String,
+    mut avatar_url: Option<String>,
     net_tx: std::sync::mpsc::Sender<NetEvent>,
     mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<UiCommand>,
     ctx: egui::Context,
@@ -330,6 +330,15 @@ pub async fn run(
                             });
                             ctx.request_repaint();
                             log::info!("[webrtc] Voice {}", if active { "joined" } else { "left" });
+                        }
+                        UiCommand::ProfileUpdated { new_username, avatar_url: new_url } => {
+                            // Broadcast to all peers so their sidebar updates immediately
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastProfileUpdate {
+                                new_username: new_username.clone(),
+                                avatar_url:   new_url.clone(),
+                            });
+                            username    = new_username;
+                            avatar_url  = new_url;
                         }
                         UiCommand::SetMuted(muted) => {
                             is_muted = muted;

@@ -221,6 +221,8 @@ pub enum NetEvent {
     Error(String),
     /// A peer's voice state changed (speaking, muted, joined/left voice).
     VoiceStateUpdate { from: String, speaking: bool, muted: bool, in_voice: bool },
+    /// A peer changed their display name or avatar.
+    ProfileUpdated { from: String, new_username: String, avatar_url: Option<String> },
 }
 
 /// Commands sent FROM the egui UI thread TO the async network task.
@@ -234,6 +236,8 @@ pub enum UiCommand {
     ToggleVoice(bool),
     /// Mute (true) or unmute (false) the local microphone while remaining in voice.
     SetMuted(bool),
+    /// User updated their display name or uploaded a new avatar; re-broadcast to all peers.
+    ProfileUpdated { new_username: String, avatar_url: Option<String> },
     Disconnect,
 }
 

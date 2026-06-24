@@ -193,6 +193,15 @@ impl AppState {
                 }
             }
 
+            NetEvent::ProfileUpdated { from, new_username, avatar_url } => {
+                if let Some(peer) = self.peers.iter_mut().find(|p| p.username == from) {
+                    peer.username = new_username;
+                    if avatar_url.is_some() {
+                        peer.avatar_url = avatar_url;
+                    }
+                }
+            }
+
             NetEvent::Disconnected => {
                 self.push_system("Disconnected from signaling server.");
                 // Clear peer list so we don't show stale entries

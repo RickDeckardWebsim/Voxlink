@@ -452,6 +452,21 @@ fn render_channel_header(ui: &mut egui::Ui, state: &AppState) {
 // render_message_area: fills the CentralPanel with a full-height scroll area.
 // The input bar is now a TopBottomPanel::bottom, so no manual height math needed.
 fn render_message_area(_ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState) {
+    // Build a username → avatar URL lookup from live session + peer list so that
+    // every chat message can show the correct profile picture next to its author.
+    let mut avatar_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if let Some(ref s) = state.session {
+        if let Some(ref url) = s.avatar_url {
+            avatar_map.insert(state.username.clone(), url.clone());
+        }
+    }
+    for peer in &state.peers {
+        if let Some(ref url) = peer.avatar_url {
+            avatar_map.insert(peer.username.clone(), url.clone());
+        }
+    }
+
     ScrollArea::vertical()
         .id_salt("messages_scroll")
         .auto_shrink([false, false])
@@ -470,7 +485,8 @@ fn render_message_area(_ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppS
                     && prev_kind == Some(&msg.kind)
                     && !is_system;
 
-                components::render_message(ui, msg, !same_author);
+                let avatar_url = avatar_map.get(msg.author.as_str()).map(String::as_str);
+                components::render_message(ui, msg, !same_author, avatar_url);
 
                 prev_author = Some(msg.author.as_str());
                 prev_kind   = Some(&msg.kind);

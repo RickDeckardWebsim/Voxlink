@@ -1,6 +1,6 @@
 [package]
 name        = "voxlink"
-version     = "0.1.7"
+version     = "2.3.0"
 edition     = "2021"
 description = "A hyper-optimized, $0-cost P2P voice and text chat app"
 authors     = ["VoxLink Contributors"]

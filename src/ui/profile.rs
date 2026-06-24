@@ -39,6 +39,13 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
                             session.avatar_url = Some(url);
                         }
                         session.save();
+                        // Tell the webrtc task so it re-broadcasts to peers immediately.
+                        if let Some(tx) = &state.cmd_tx {
+                            let _ = tx.send(crate::state::UiCommand::ProfileUpdated {
+                                new_username: session.username.clone(),
+                                avatar_url:   session.avatar_url.clone(),
+                            });
+                        }
                         state.session = Some(session);
                     }
                 }

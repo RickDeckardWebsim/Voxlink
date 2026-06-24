@@ -74,10 +74,10 @@ pub fn draw_status_dot(painter: &Painter, center: Pos2, radius: f32, color: Colo
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 
-pub fn render_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool) {
+pub fn render_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool, avatar_url: Option<&str>) {
     match msg.kind {
         MessageKind::System => render_system_message(ui, msg),
-        _ => render_chat_message(ui, msg, show_header),
+        _ => render_chat_message(ui, msg, show_header, avatar_url),
     }
 }
 
@@ -102,7 +102,7 @@ fn render_system_message(ui: &mut Ui, msg: &ChatMessage) {
     ui.add_space(4.0);
 }
 
-fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool) {
+fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool, avatar_url: Option<&str>) {
     ui.add_space(if show_header { 10.0 } else { 1.0 });
 
     let author_color = theme::avatar_color(&msg.author);
@@ -111,9 +111,7 @@ fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool) {
         ui.add_space(12.0);
 
         if show_header {
-            // In a real app we'd fetch the peer's avatar from state, but ChatMessage doesn't store avatar_url currently.
-            // Let's modify components.rs later if needed, but for now fallback to None for chat messages
-            draw_avatar(ui, &msg.author, None, theme::AVATAR_SIZE);
+            draw_avatar(ui, &msg.author, avatar_url, theme::AVATAR_SIZE);
             ui.add_space(8.0);
         } else {
             ui.add_space(theme::AVATAR_SIZE + 8.0);
