@@ -20,14 +20,16 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
             render_sidebar(ui, state);
         });
 
-    // ── Update Banner ─────────────────────────────────────────────────────────
+    // ── Update Banner (optional, top) ────────────────────────────────────────
     if let Some(ref version) = state.update_available_version {
         egui::TopBottomPanel::top("update_banner")
             .exact_size(40.0)
             .frame(
                 Frame::default()
-                    .fill(Color32::from_rgb(45, 120, 60)) // Green banner
-                    .inner_margin(Margin::symmetric(16i8, 0i8)),
+                    .fill(Color32::from_rgb(45, 120, 60))
+                    // Symmetric vertical margin so text is vertically centred and
+                    // has SAFE_MARGIN clearance from the window top edge.
+                    .inner_margin(Margin { left: 16, right: 16, top: theme::SAFE_MARGIN as i8, bottom: theme::SAFE_MARGIN as i8 }),
             )
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -54,20 +56,43 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 2. Channel header (top panel) ─────────────────────────────────────────
+    // ── 2. Channel header (top) ───────────────────────────────────────────────
+    // Vertical inner_margin centers the row and keeps it 14 px from the panel
+    // top edge (satisfies the ≥ 8 px safe-margin rule).
     egui::TopBottomPanel::top("channel_header")
         .exact_size(theme::CHANNEL_HEADER_HEIGHT)
         .frame(
             Frame::default()
                 .fill(theme::DARK_BG)
-                .inner_margin(Margin::symmetric(16i8, 0i8))
+                .inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 })
                 .stroke(egui::Stroke::new(1.0, theme::SEPARATOR)),
         )
         .show(ctx, |ui| {
             render_channel_header(ui, state);
         });
 
-    // ── 3. Central panel — messages + input ───────────────────────────────────
+    // ── 3. Input bar (BOTTOM) — anchored to the window bottom edge ────────────
+    // Using TopBottomPanel::bottom pins it to the window bottom regardless of
+    // message area height. SAFE_MARGIN bottom keeps content off the window edge.
+    egui::TopBottomPanel::bottom("input_bar")
+        .resizable(false)
+        .frame(Frame::default().fill(theme::DARK_BG).inner_margin(Margin::same(0i8)))
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .inner_margin(Margin {
+                    left:   16,
+                    right:  16,
+                    top:    8,
+                    bottom: theme::SAFE_MARGIN as i8,
+                })
+                .show(ui, |ui| {
+                    render_input_bar(ctx, ui, state);
+                });
+        });
+
+    // ── 4. Central panel — messages scroll area only ──────────────────────────
+    // CentralPanel fills whatever space remains between the top and bottom panels.
+    // No manual height math needed — the scroll area fills the full height.
     egui::CentralPanel::default()
         .frame(Frame::default().fill(theme::DARK_BG).inner_margin(Margin::same(0i8)))
         .show(ctx, |ui| {
@@ -396,53 +421,43 @@ fn sidebar_channel_item(ui: &mut egui::Ui, name: &str, active: bool) {
 // ── Channel Header ────────────────────────────────────────────────────────────
 
 fn render_channel_header(ui: &mut egui::Ui, state: &AppState) {
-    ui.vertical_centered_justified(|ui| {
-        ui.set_height(theme::CHANNEL_HEADER_HEIGHT);
-        ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            ui.label(RichText::new("#").size(18.0).color(theme::TEXT_MUTED).strong());
-            ui.add_space(4.0);
-            ui.label(RichText::new("general").size(15.0).color(Color32::WHITE).strong());
-            ui.label(RichText::new("|").size(16.0).color(theme::SEPARATOR));
-            // RTL sub-layout: peer count pins to the right, description fills the rest
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(theme::SAFE_MARGIN);
-                ui.label(
-                    // U+25A3 WHITE SQUARE CONTAINING BLACK SMALL SQUARE — BMP "people" indicator
-                    RichText::new(format!("{} online", state.peers.len() + 1))
+    // Frame inner_margin already provides vertical centering; just lay out horizontally.
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("#").size(18.0).color(theme::TEXT_MUTED).strong());
+        ui.add_space(4.0);
+        ui.label(RichText::new("general").size(15.0).color(Color32::WHITE).strong());
+        ui.label(RichText::new("|").size(16.0).color(theme::SEPARATOR));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(theme::SAFE_MARGIN);
+            ui.label(
+                RichText::new(format!("{} online", state.peers.len() + 1))
+                    .size(13.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.add_space(8.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new("VoxLink P2P — messages route directly between you and your peers")
                         .size(13.0)
                         .color(theme::TEXT_MUTED),
-                );
-                ui.add_space(8.0);
-                // Description label takes all remaining width; truncates before overflowing
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("VoxLink P2P — messages route directly between you and your peers")
-                            .size(13.0)
-                            .color(theme::TEXT_MUTED),
-                    )
-                    .wrap_mode(egui::TextWrapMode::Truncate),
-                );
-            });
+                )
+                .wrap_mode(egui::TextWrapMode::Truncate),
+            );
         });
     });
 }
 
 // ── Message Area ─────────────────────────────────────────────────────────────
 
-fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState) {
-    let input_height  = theme::INPUT_BAR_HEIGHT;
-    let msg_height    = (ui.available_height() - input_height).max(0.0);
-
-    // Messages scroll area
+// render_message_area: fills the CentralPanel with a full-height scroll area.
+// The input bar is now a TopBottomPanel::bottom, so no manual height math needed.
+fn render_message_area(_ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState) {
     ScrollArea::vertical()
         .id_salt("messages_scroll")
         .auto_shrink([false, false])
-        .max_height(msg_height)
         .stick_to_bottom(true)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.set_min_height(msg_height);
             ui.add_space(8.0);
 
             let messages = state.messages.clone();
@@ -461,20 +476,12 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
                 prev_kind   = Some(&msg.kind);
             }
 
-            // Force-scroll to bottom when a new message arrives
             if state.scroll_to_bottom {
                 ui.scroll_to_cursor(Some(egui::Align::Max));
                 state.scroll_to_bottom = false;
             }
 
             ui.add_space(8.0);
-        });
-
-    // Input bar wrapper to add padding from the edges
-    egui::Frame::NONE
-        .inner_margin(Margin { left: 16, right: 16, top: 6, bottom: 8 })
-        .show(ui, |ui| {
-            render_input_bar(ctx, ui, state);
         });
 }
 

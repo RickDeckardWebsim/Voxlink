@@ -29,7 +29,6 @@ pub const TEXT_PEER_AUTHOR: Color32 = Color32::from_rgb(0xf2, 0xf3, 0xf5);
 
 pub const SIDEBAR_WIDTH: f32          = 240.0;
 pub const CHANNEL_HEADER_HEIGHT: f32  = 52.0;
-pub const INPUT_BAR_HEIGHT: f32       = 68.0;
 pub const AVATAR_SIZE: f32            = 36.0;
 // Corner radius used with CornerRadius::same() — must be u8
 pub const CORNER_RADIUS: u8 = 8;
