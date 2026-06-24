@@ -49,10 +49,6 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
         }
     }
 
-    // Darkened overlay
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("overlay")));
-    painter.rect_filled(ctx.screen_rect(), 0.0, Color32::from_black_alpha(90));
-
     egui::Window::new("Profile Settings")
         .id(egui::Id::new("profile_modal"))
         .collapsible(false)

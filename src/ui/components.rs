@@ -24,6 +24,10 @@ pub fn draw_avatar(ui: &mut Ui, username: &str, avatar_url: Option<&str>, size: 
                 let uv_r = 0.5;
                 let uv_center = Pos2::new(0.5, 0.5);
                 
+                // Triangle fan: center vertex shared, one triangle per edge segment.
+                // Vertex layout per triangle: [p0, p1, center] at [base, base+1, base+2].
+                // Indices must be computed per-iteration — hardcoding them breaks every
+                // triangle after the first because the index buffer is global.
                 let n = 32;
                 for i in 0..n {
                     let a0 = i as f32 * std::f32::consts::TAU / n as f32;
@@ -32,10 +36,11 @@ pub fn draw_avatar(ui: &mut Ui, username: &str, avatar_url: Option<&str>, size: 
                     let p1 = center + Vec2::new(a1.cos(), a1.sin()) * r;
                     let uv0 = uv_center + Vec2::new(a0.cos(), a0.sin()) * uv_r;
                     let uv1 = uv_center + Vec2::new(a1.cos(), a1.sin()) * uv_r;
-                    mesh.add_triangle(2, 0, 1);
-                    mesh.vertices.push(egui::epaint::Vertex { pos: p0, uv: uv0, color });
-                    mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: uv1, color });
+                    let base = mesh.vertices.len() as u32;
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p0,     uv: uv0,       color });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p1,     uv: uv1,       color });
                     mesh.vertices.push(egui::epaint::Vertex { pos: center, uv: uv_center, color });
+                    mesh.add_triangle(base + 2, base, base + 1);
                 }
                 ui.painter().add(mesh);
                 drawn_image = true;

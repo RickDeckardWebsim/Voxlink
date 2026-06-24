@@ -149,9 +149,12 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
     if remaining > 0.0 { ui.add_space(remaining); }
 
     // ── Bottom profile bar ────────────────────────────────────────────────────
+    // outer_margin bottom enforces SAFE_MARGIN gap from the window edge.
+    // SIDEBAR_BOTTOM_H already accounts for this extra 8 px.
     Frame::default()
         .fill(theme::HEADER_BG)
         .inner_margin(Margin::symmetric(14i8, 12i8))
+        .outer_margin(Margin { left: 0, right: 0, top: 0, bottom: theme::SAFE_MARGIN as i8 })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
