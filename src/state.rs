@@ -31,6 +31,9 @@ pub struct ThemeOverride {
     pub input_text: Option<[u8; 4]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_header_text: Option<[u8; 4]>,
+    /// Message area, channel header strip, and input-bar outer panel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_bg: Option<[u8; 4]>,
 }
 
 impl ThemeOverride {

@@ -24,14 +24,14 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
     // ── Update modal (rendered above everything else) ─────────────────────────
     update_ui::render_update_modal(ctx, state);
 
+    let chat_fill = state.theme_override.chat_bg.map(ThemeOverride::c32).unwrap_or(theme::DARK_BG);
+
     // ── 2. Channel header (top) ───────────────────────────────────────────────
-    // Vertical inner_margin centers the row and keeps it 14 px from the panel
-    // top edge (satisfies the ≥ 8 px safe-margin rule).
     egui::TopBottomPanel::top("channel_header")
         .exact_size(theme::CHANNEL_HEADER_HEIGHT)
         .frame(
             Frame::default()
-                .fill(theme::DARK_BG)
+                .fill(chat_fill)
                 .inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 })
                 .stroke(egui::Stroke::new(1.0, theme::SEPARATOR)),
         )
@@ -40,11 +40,9 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
         });
 
     // ── 3. Input bar (BOTTOM) — anchored to the window bottom edge ────────────
-    // Using TopBottomPanel::bottom pins it to the window bottom regardless of
-    // message area height. SAFE_MARGIN bottom keeps content off the window edge.
     egui::TopBottomPanel::bottom("input_bar")
         .resizable(false)
-        .frame(Frame::default().fill(theme::DARK_BG).inner_margin(Margin::same(0i8)))
+        .frame(Frame::default().fill(chat_fill).inner_margin(Margin::same(0i8)))
         .show(ctx, |ui| {
             egui::Frame::NONE
                 .inner_margin(Margin {
@@ -62,7 +60,7 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
     // CentralPanel fills whatever space remains between the top and bottom panels.
     // No manual height math needed — the scroll area fills the full height.
     egui::CentralPanel::default()
-        .frame(Frame::default().fill(theme::DARK_BG).inner_margin(Margin::same(0i8)))
+        .frame(Frame::default().fill(chat_fill).inner_margin(Margin::same(0i8)))
         .show(ctx, |ui| {
             render_message_area(ctx, ui, state);
         });
@@ -88,9 +86,10 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
             ui.horizontal(|ui| {
                 let (lr, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
                 if ui.is_rect_visible(lr) {
-                    // Rounded-rect background with vector "V" — distinctive app icon shape
                     let rect = egui::Rect::from_center_size(lr.center(), Vec2::splat(22.0));
-                    ui.painter().rect_filled(rect, egui::CornerRadius::same(6u8), theme::BLURPLE);
+                    // Badge uses logo_bg if set, otherwise falls back to BLURPLE accent
+                    let badge_bg = state.theme_override.logo_bg.map(ThemeOverride::c32).unwrap_or(theme::BLURPLE);
+                    ui.painter().rect_filled(rect, egui::CornerRadius::same(6u8), badge_bg);
                     let tl  = rect.min + Vec2::new(4.5, 5.0);
                     let tr  = rect.min + Vec2::new(17.5, 5.0);
                     let bot = egui::pos2(rect.center().x, rect.max.y - 5.0);
@@ -182,10 +181,9 @@ fn render_sidebar(ui: &mut egui::Ui, state: &mut AppState) {
     if remaining > 0.0 { ui.add_space(remaining); }
 
     // ── Bottom profile bar ────────────────────────────────────────────────────
-    // outer_margin bottom enforces SAFE_MARGIN gap from the window edge.
-    // SIDEBAR_BOTTOM_H already accounts for this extra 8 px.
+    let profile_bar_bg = state.theme_override.logo_bg.map(ThemeOverride::c32).unwrap_or(theme::HEADER_BG);
     Frame::default()
-        .fill(theme::HEADER_BG)
+        .fill(profile_bar_bg)
         .inner_margin(Margin::symmetric(14i8, 12i8))
         .outer_margin(Margin { left: 0, right: 0, top: 0, bottom: theme::SAFE_MARGIN as i8 })
         .show(ui, |ui| {
@@ -430,9 +428,8 @@ fn sidebar_channel_item(ui: &mut egui::Ui, name: &str, active: bool) {
 
 fn render_channel_header(ui: &mut egui::Ui, state: &AppState) {
     let header_text = state.theme_override.channel_header_text.map(ThemeOverride::c32).unwrap_or(Color32::WHITE);
-    // Frame inner_margin already provides vertical centering; just lay out horizontally.
     ui.horizontal(|ui| {
-        ui.label(RichText::new("#").size(18.0).color(theme::TEXT_MUTED).strong());
+        ui.label(RichText::new("#").size(18.0).color(header_text).strong());
         ui.add_space(4.0);
         ui.label(RichText::new("general").size(15.0).color(header_text).strong());
         ui.label(RichText::new("|").size(16.0).color(theme::SEPARATOR));

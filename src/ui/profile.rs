@@ -179,6 +179,11 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
                             |t, v| t.channel_header_text = v,
                             Color32::WHITE,
                         );
+                        color_row(ui, state, "Chat area background",
+                            |t| t.chat_bg,
+                            |t, v| t.chat_bg = v,
+                            theme::DARK_BG,
+                        );
 
                         ui.add_space(16.0);
 
