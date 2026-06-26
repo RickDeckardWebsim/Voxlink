@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoxLink</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Login ──────────────────────────────────────────────────────────────── -->
+<div id="login-screen" class="screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-badge">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <rect width="22" height="22" rx="6" fill="#5865f2"/>
+          <polyline points="4.5,5 11,17 17.5,5" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <span>VoxLink</span>
+    </div>
+    <h2>Welcome back</h2>
+    <p class="login-sub">Sign in to continue chatting</p>
+    <form id="login-form">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="you@example.com" required autocomplete="email">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="••••••••" required autocomplete="current-password">
+      <div id="login-error" class="error-text"></div>
+      <button type="submit" id="login-btn" class="btn-primary">Sign In</button>
+    </form>
+    <p class="login-footer">Don't have an account? Ask your server admin.</p>
+  </div>
+</div>
+
+<!-- ── Chat ───────────────────────────────────────────────────────────────── -->
+<div id="chat-screen" class="screen" style="display:none">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+        <rect width="22" height="22" rx="6" fill="#5865f2"/>
+        <polyline points="4.5,5 11,17 17.5,5" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="sidebar-title">VoxLink</span>
+    </div>
+
+    <div id="sidebar-scroll">
+      <div class="section-header">TEXT CHANNELS</div>
+      <div class="channel-item active">
+        <span class="channel-hash">#</span> general
+      </div>
+
+      <div class="section-header" style="margin-top:12px">VOICE CHANNELS</div>
+      <div id="voice-section">
+        <div class="channel-item" id="voice-row">
+          <span id="voice-indicator" class="voice-dot"></span>
+          <span id="voice-label">▶ General</span>
+          <button id="voice-toggle-btn" class="voice-join-btn">Join</button>
+        </div>
+        <div id="voice-participants"></div>
+      </div>
+
+      <div class="section-header" id="members-header" style="margin-top:12px">ONLINE  1</div>
+      <div id="member-list"></div>
+    </div>
+
+    <!-- Profile bar -->
+    <div id="profile-bar">
+      <div id="self-avatar-bar" class="avatar avatar-sm"></div>
+      <div class="profile-info">
+        <div id="self-username-bar" class="profile-name">User</div>
+        <div id="self-status-bar" class="profile-status">Online</div>
+      </div>
+      <button id="mute-btn" class="icon-btn" title="Toggle mute" style="display:none">🎙</button>
+      <button id="logout-btn" class="icon-btn" title="Sign out">⏏</button>
+    </div>
+  </div>
+
+  <!-- Main area -->
+  <div id="main-area">
+    <div id="channel-header">
+      <span class="channel-hash-lg">#</span>
+      <span class="channel-name-lg">general</span>
+      <span class="header-sep">|</span>
+      <span id="peer-count" class="header-meta">1 online</span>
+      <span class="header-badge">VoxLink P2P</span>
+    </div>
+
+    <div id="messages"></div>
+
+    <div id="input-wrap">
+      <div id="input-box">
+        <span id="input-placeholder">Message #general…</span>
+        <div
+          id="message-input"
+          class="chat-input"
+          contenteditable="true"
+          spellcheck="true"
+          role="textbox"
+          aria-label="Message #general"
+          aria-multiline="false"
+        ></div>
+        <button id="send-btn" class="icon-btn send-btn" title="Send">↑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden audio container -->
+<div id="audio-elements" style="display:none"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
