@@ -6,6 +6,7 @@
   --dark-bg:      #1e1f22;
   --sidebar-bg:   #2b2d31;
   --header-bg:    #232428;
+  --logo-badge:   #5865f2;
   --logo-text:    #ffffff;
   --input-bg:     #484b54;
   --input-text:   #dbdee1;
@@ -149,8 +150,9 @@ html, body {
   flex-shrink: 0;
 }
 
-/* SVG V icon inherits logo-text for the chevron stroke */
-#sidebar-header svg polyline { stroke: var(--logo-text); }
+/* SVG V badge — badge fill and chevron stroke are both customisable */
+#sidebar-header svg rect     { fill:   var(--logo-badge); }
+#sidebar-header svg polyline { stroke: var(--logo-text);  }
 
 .sidebar-title { flex: 1; }
 

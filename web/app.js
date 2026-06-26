@@ -24,13 +24,14 @@ const AVATAR_PALETTE = [
 
 // ── Theme defaults (must mirror :root in style.css) ───────────────────────────
 const THEME_DEFAULTS = {
-  '--sidebar-bg': '#2b2d31',
-  '--header-bg':  '#232428',
-  '--logo-text':  '#ffffff',
-  '--input-bg':   '#484b54',
-  '--input-text': '#dbdee1',
-  '--header-text':'#dbdee1',
-  '--dark-bg':    '#1e1f22',
+  '--dark-bg':     '#1e1f22',
+  '--sidebar-bg':  '#2b2d31',
+  '--header-bg':   '#232428',
+  '--logo-badge':  '#5865f2',
+  '--logo-text':   '#ffffff',
+  '--input-bg':    '#484b54',
+  '--input-text':  '#dbdee1',
+  '--header-text': '#dbdee1',
 };
 
 function loadTheme() {
@@ -179,6 +180,18 @@ async function handleLogin(e) {
     if (!username) { $('login-error').textContent = 'Please enter a username.'; setLoginBusy(false); return; }
     const { data, error } = await sb.auth.signUp({ email, password });
     if (error) { $('login-error').textContent = error.message; setLoginBusy(false); return; }
+    if (!data.session) {
+      // Email verification is enabled on this project — user must confirm before signing in.
+      $('login-error').style.color = '#23a55a';
+      $('login-error').textContent = 'Account created! Check your email to confirm, then sign in.';
+      $('login-btn').disabled = false;
+      $('login-btn').textContent = 'Sign In';
+      authMode = 'signin';
+      $('username-row').style.display   = 'none';
+      $('auth-toggle-text').textContent = "Don't have an account?";
+      $('auth-toggle-link').textContent = 'Create one';
+      return;
+    }
     await sb.from('profiles').upsert({ id: data.user.id, username, avatar_url: null, description: '' });
     await enterChat(data.session);
   } else {
@@ -601,7 +614,7 @@ async function fetchHistory() {
   scrollBottom();
 }
 
-function trySend() {
+async function trySend() {
   const input   = $('message-input');
   const content = input.textContent.trim();
   if (!content) return;
@@ -610,7 +623,9 @@ function trySend() {
 
   bcast('chat_message', { from: myUsername, content });
   appendMsg(myUsername, content);
-  sb.from('messages').insert({ from_user: myUsername, content, channel: 'general' });
+
+  const { error } = await sb.from('messages').insert({ from_user: myUsername, content, channel: 'general' });
+  if (error) sysMsg(`⚠ Message not saved to history: ${error.message}`);
 }
 
 async function uploadMedia(file) {
@@ -620,12 +635,12 @@ async function uploadMedia(file) {
   $('attach-btn').disabled    = true;
   $('attach-btn').textContent = '…';
 
-  const { error } = await sb.storage.from('avatars').upload(path, file, { contentType: file.type });
+  const { error: uploadErr } = await sb.storage.from('avatars').upload(path, file, { contentType: file.type });
 
   $('attach-btn').disabled    = false;
   $('attach-btn').textContent = '+';
 
-  if (error) { sysMsg(`Upload failed: ${error.message}`); return; }
+  if (uploadErr) { sysMsg(`Upload failed: ${uploadErr.message}`); return; }
 
   const url      = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}`;
   const kind     = kindForMime(file.type);
@@ -636,10 +651,12 @@ async function uploadMedia(file) {
 
   appendMsg(myUsername, caption, new Date(), true, { url, kind, filename });
   await bcast('chat_media', { from: myUsername, content: caption, url, kind, filename });
-  sb.from('messages').insert({
+
+  const { error: insertErr } = await sb.from('messages').insert({
     from_user: myUsername, content: caption, channel: 'general',
     attachment_url: url, attachment_kind: kind, attachment_filename: filename,
   });
+  if (insertErr) sysMsg(`⚠ Media not saved to history: ${insertErr.message}`);
 }
 
 function kindForMime(mime) {
