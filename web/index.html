@@ -74,8 +74,8 @@
       <div id="member-list"></div>
     </div>
 
-    <!-- Profile bar -->
-    <div id="profile-bar">
+    <!-- Profile bar — click to edit your profile -->
+    <div id="profile-bar" title="Click to edit profile">
       <div id="self-avatar-bar" class="avatar avatar-sm"></div>
       <div class="profile-info">
         <div id="self-username-bar" class="profile-name">User</div>
@@ -118,28 +118,111 @@
   </div>
 </div>
 
-<!-- Profile modal -->
+<!-- ── Inspect card — floating profile view ───────────────────────────────── -->
+<div id="inspect-card" style="display:none">
+  <button id="inspect-close-btn" title="Close">✕</button>
+  <div class="inspect-hdr">
+    <div id="inspect-av" class="avatar avatar inspect-avatar-lg" style="width:56px;height:56px;font-size:22px"></div>
+    <div>
+      <div id="inspect-name" class="inspect-name"></div>
+      <div class="inspect-online">● Online</div>
+    </div>
+  </div>
+  <div id="inspect-about" style="display:none">
+    <div class="field-label" style="margin-top:8px">ABOUT ME</div>
+    <div id="inspect-desc" class="inspect-desc-text"></div>
+  </div>
+</div>
+
+<!-- ── Profile modal — edit your own profile + appearance ────────────────── -->
 <div id="profile-modal" class="modal-overlay" style="display:none">
   <div class="modal-card">
     <div class="modal-header">
-      <h3>Profile Settings</h3>
+      <h3>Profile &amp; Appearance</h3>
       <button id="profile-close-btn" class="modal-close">✕</button>
     </div>
+
+    <!-- Avatar -->
     <div class="profile-avatar-wrap">
       <div id="profile-avatar-preview" class="avatar profile-avatar-lg" title="Click to upload avatar"></div>
       <p class="hint">Click avatar to upload</p>
       <input type="file" id="profile-avatar-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
     </div>
+
+    <!-- Profile fields -->
     <label class="field-label">USERNAME</label>
     <input type="text" id="profile-username-input" class="field-input" maxlength="32">
+
     <label class="field-label">ABOUT ME</label>
     <textarea id="profile-desc-input" class="field-input field-textarea" maxlength="250" rows="3" placeholder="Tell people about yourself…"></textarea>
     <div class="desc-count"><span id="profile-desc-count">0</span> / 250</div>
+
     <div id="profile-modal-error" class="error-text"></div>
-    <div class="modal-actions">
+
+    <div class="modal-actions" style="margin-bottom:0">
       <button id="profile-cancel-btn" class="btn-ghost">Cancel</button>
       <button id="profile-save-btn" class="btn-primary btn-inline">Save Changes</button>
     </div>
+
+    <!-- ── Appearance ── -->
+    <div class="appearance-title">Appearance</div>
+
+    <div class="color-pick-row">
+      <span class="color-pick-label">Sidebar background</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--sidebar-bg">
+        <button class="color-pick-reset" data-var="--sidebar-bg">Reset</button>
+      </div>
+    </div>
+
+    <div class="color-pick-row">
+      <span class="color-pick-label">Header &amp; profile bar</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--header-bg">
+        <button class="color-pick-reset" data-var="--header-bg">Reset</button>
+      </div>
+    </div>
+
+    <div class="color-pick-row">
+      <span class="color-pick-label">Logo text &amp; icon</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--logo-text">
+        <button class="color-pick-reset" data-var="--logo-text">Reset</button>
+      </div>
+    </div>
+
+    <div class="color-pick-row">
+      <span class="color-pick-label">Input background</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--input-bg">
+        <button class="color-pick-reset" data-var="--input-bg">Reset</button>
+      </div>
+    </div>
+
+    <div class="color-pick-row">
+      <span class="color-pick-label">Input text &amp; icon</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--input-text">
+        <button class="color-pick-reset" data-var="--input-text">Reset</button>
+      </div>
+    </div>
+
+    <div class="color-pick-row">
+      <span class="color-pick-label">Channel header text</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--header-text">
+        <button class="color-pick-reset" data-var="--header-text">Reset</button>
+      </div>
+    </div>
+
+    <div class="color-pick-row" style="margin-bottom:4px">
+      <span class="color-pick-label">Chat area background</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--dark-bg">
+        <button class="color-pick-reset" data-var="--dark-bg">Reset</button>
+      </div>
+    </div>
+
   </div>
 </div>
 

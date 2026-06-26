@@ -1,6 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // VoxLink Web Client — vanilla JS, no build step
-// Talks to the exact same Supabase backend as the desktop app.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -18,11 +17,45 @@ const RTC_CONFIG = {
   ],
 };
 
-// Avatar palette matches desktop theme.rs exactly
 const AVATAR_PALETTE = [
   '#5865f2','#3ba55d','#eb459e','#f0b232',
   '#ed4245','#17a8e3','#9c59d1','#1abc9c',
 ];
+
+// ── Theme defaults (must mirror :root in style.css) ───────────────────────────
+const THEME_DEFAULTS = {
+  '--sidebar-bg': '#2b2d31',
+  '--header-bg':  '#232428',
+  '--logo-text':  '#ffffff',
+  '--input-bg':   '#484b54',
+  '--input-text': '#dbdee1',
+  '--header-text':'#dbdee1',
+  '--dark-bg':    '#1e1f22',
+};
+
+function loadTheme() {
+  const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
+  for (const [v, def] of Object.entries(THEME_DEFAULTS)) {
+    document.documentElement.style.setProperty(v, saved[v] ?? def);
+  }
+}
+
+function setThemeColor(cssVar, value) {
+  document.documentElement.style.setProperty(cssVar, value);
+  const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
+  saved[cssVar] = value;
+  localStorage.setItem('voxlink_theme', JSON.stringify(saved));
+}
+
+function resetThemeColor(cssVar) {
+  document.documentElement.style.setProperty(cssVar, THEME_DEFAULTS[cssVar]);
+  const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
+  delete saved[cssVar];
+  localStorage.setItem('voxlink_theme', JSON.stringify(saved));
+}
+
+// Apply saved theme immediately (before first paint)
+loadTheme();
 
 // ── Supabase client ───────────────────────────────────────────────────────────
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -43,6 +76,7 @@ let amSpeaking    = false;
 let silenceFrames = 0;
 let lastMsgAuthor = null;
 let authMode      = 'signin';
+let inspectedUser = null;
 
 // ── DOM shortcuts ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -71,9 +105,9 @@ function bindEvents() {
   });
 
   // Chat
-  $('logout-btn').addEventListener('click', handleLogout);
-  $('voice-toggle-btn').addEventListener('click', toggleVoice);
-  $('mute-btn').addEventListener('click', toggleMute);
+  $('logout-btn').addEventListener('click', e => { e.stopPropagation(); handleLogout(); });
+  $('mute-btn').addEventListener('click', e => { e.stopPropagation(); toggleMute(); });
+  $('voice-toggle-btn').addEventListener('click', e => { e.stopPropagation(); toggleVoice(); });
   $('send-btn').addEventListener('click', trySend);
 
   const input = $('message-input');
@@ -88,7 +122,7 @@ function bindEvents() {
     e.target.value = '';
   });
 
-  // Profile bar click → open modal
+  // Profile bar → edit modal
   $('profile-bar').addEventListener('click', openProfileModal);
   $('profile-bar').style.cursor = 'pointer';
 
@@ -105,6 +139,31 @@ function bindEvents() {
   $('profile-desc-input').addEventListener('input', () => {
     $('profile-desc-count').textContent = $('profile-desc-input').value.length;
   });
+
+  // Appearance colour pickers — live preview
+  document.querySelectorAll('.color-pick-input').forEach(inp => {
+    inp.addEventListener('input', e => setThemeColor(e.target.dataset.var, e.target.value));
+  });
+  document.querySelectorAll('.color-pick-reset').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const v = e.target.dataset.var;
+      resetThemeColor(v);
+      const picker = document.querySelector(`.color-pick-input[data-var="${CSS.escape(v)}"]`);
+      if (picker) picker.value = THEME_DEFAULTS[v];
+    });
+  });
+
+  // Inspect card
+  $('inspect-close-btn').addEventListener('click', closeInspectPanel);
+
+  // Close inspect on ESC or click outside
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeInspectPanel(); closeProfileModal(); } });
+  document.addEventListener('click', e => {
+    if ($('inspect-card').style.display === 'none') return;
+    if ($('inspect-card').contains(e.target)) return;
+    if (e.target.closest('.member-row')) return;
+    closeInspectPanel();
+  });
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -118,10 +177,8 @@ async function handleLogin(e) {
   if (authMode === 'signup') {
     const username = $('login-username').value.trim();
     if (!username) { $('login-error').textContent = 'Please enter a username.'; setLoginBusy(false); return; }
-
     const { data, error } = await sb.auth.signUp({ email, password });
     if (error) { $('login-error').textContent = error.message; setLoginBusy(false); return; }
-
     await sb.from('profiles').upsert({ id: data.user.id, username, avatar_url: null, description: '' });
     await enterChat(data.session);
   } else {
@@ -170,13 +227,48 @@ async function cleanup() {
   respondedTo.clear();
 }
 
+// ── Inspect panel ─────────────────────────────────────────────────────────────
+function openInspectPanel(username, clickY) {
+  const isSelf = username === myUsername;
+  const avUrl  = isSelf ? myAvatarUrl           : (peers[username]?.avatarUrl  ?? null);
+  const desc   = isSelf ? (myDescription ?? '') : (peers[username]?.description ?? '');
+
+  const avEl = $('inspect-av');
+  avEl.style.background = avatarColor(username);
+  avEl.innerHTML = avUrl
+    ? `<img src="${esc(avUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+    : esc((username[0] ?? '?').toUpperCase());
+
+  $('inspect-name').textContent = username;
+
+  if (desc) {
+    $('inspect-desc').textContent    = desc;
+    $('inspect-about').style.display = '';
+  } else {
+    $('inspect-about').style.display = 'none';
+  }
+
+  const card = $('inspect-card');
+  card.style.display = 'block';
+  const cardH = card.offsetHeight || 120;
+  const top   = Math.max(8, Math.min(clickY - 16, window.innerHeight - cardH - 8));
+  card.style.top = `${top}px`;
+  inspectedUser = username;
+}
+
+function closeInspectPanel() {
+  $('inspect-card').style.display = 'none';
+  inspectedUser = null;
+}
+
 // ── Profile modal ─────────────────────────────────────────────────────────────
 function openProfileModal() {
-  $('profile-username-input').value  = myUsername    ?? '';
-  $('profile-desc-input').value      = myDescription ?? '';
-  $('profile-desc-count').textContent = ($('profile-desc-input').value.length);
+  $('profile-username-input').value    = myUsername    ?? '';
+  $('profile-desc-input').value        = myDescription ?? '';
+  $('profile-desc-count').textContent  = ($('profile-desc-input').value.length).toString();
   $('profile-modal-error').textContent = '';
   renderProfileModalAvatar();
+  syncColorPickers();
   $('profile-modal').style.display = 'flex';
 }
 
@@ -190,6 +282,14 @@ function renderProfileModalAvatar() {
   el.innerHTML = myAvatarUrl
     ? `<img src="${esc(myAvatarUrl)}" alt="">`
     : esc((myUsername?.[0] ?? 'U').toUpperCase());
+}
+
+function syncColorPickers() {
+  const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
+  for (const [v, def] of Object.entries(THEME_DEFAULTS)) {
+    const picker = document.querySelector(`.color-pick-input[data-var="${CSS.escape(v)}"]`);
+    if (picker) picker.value = saved[v] ?? def;
+  }
 }
 
 async function saveProfile() {
@@ -212,15 +312,12 @@ async function saveProfile() {
   const oldUsername = myUsername;
   myUsername    = username;
   myDescription = description;
-
   renderProfileBar();
   renderMembers();
 
   await bcast('profile_update', {
-    from:         oldUsername,
-    new_username: myUsername,
-    avatar_url:   myAvatarUrl,
-    description:  myDescription,
+    from: oldUsername, new_username: myUsername,
+    avatar_url: myAvatarUrl, description: myDescription,
   });
 
   btn.disabled = false; btn.textContent = 'Save Changes';
@@ -231,7 +328,7 @@ async function uploadProfileAvatar(file) {
   const ext  = file.name.split('.').pop().toLowerCase() || 'png';
   const path = `${myUserId}_avatar.${ext}`;
 
-  $('profile-save-btn').disabled    = true;
+  $('profile-save-btn').disabled       = true;
   $('profile-modal-error').textContent = '';
 
   const { error } = await sb.storage.from('avatars').upload(path, file, { contentType: file.type, upsert: true });
@@ -243,7 +340,6 @@ async function uploadProfileAvatar(file) {
 
   myAvatarUrl = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}?t=${Date.now()}`;
   await sb.from('profiles').update({ avatar_url: myAvatarUrl }).eq('id', myUserId);
-
   renderProfileBar();
   renderProfileModalAvatar();
   $('profile-save-btn').disabled = false;
@@ -281,8 +377,8 @@ async function onPeerJoin({ from, avatar_url, description }) {
   const isNew = !peers[from];
   peers[from] = {
     ...peers[from],
-    avatarUrl:   avatar_url   ?? peers[from]?.avatarUrl   ?? null,
-    description: description  ?? peers[from]?.description ?? '',
+    avatarUrl:   avatar_url  ?? peers[from]?.avatarUrl   ?? null,
+    description: description ?? peers[from]?.description ?? '',
     inVoice:     peers[from]?.inVoice    ?? false,
     isSpeaking:  peers[from]?.isSpeaking ?? false,
   };
@@ -306,6 +402,7 @@ function onPeerLeave({ from }) {
   if (peerConns[from]) { peerConns[from].close(); delete peerConns[from]; }
   removeAudio(from);
   sysMsg(`${from} left the room.`);
+  if (inspectedUser === from) closeInspectPanel();
   renderMembers();
   renderVoiceParticipants();
 }
@@ -315,7 +412,6 @@ function onChatMessage({ from, content }) {
   appendMsg(from, content);
 }
 
-// Real-time media message from desktop or another web user
 function onChatMedia({ from, content, url, kind, filename }) {
   if (!from || !url) return;
   appendMsg(from, content || '', new Date(), true, { url, kind: kind || 'image', filename: filename || 'attachment' });
@@ -337,6 +433,7 @@ function onProfileUpdate({ from, new_username, avatar_url, description }) {
   const target = new_username ?? from;
   peers[target] = { ...old, avatarUrl: avatar_url ?? old.avatarUrl, description: description ?? old.description };
   if (target !== from) delete peers[from];
+  if (inspectedUser === from && target !== from) closeInspectPanel();
   renderMembers();
 }
 
@@ -353,8 +450,8 @@ async function getOrCreatePc(username) {
 
   const remoteStream = new MediaStream();
   const audio = document.createElement('audio');
-  audio.id = `audio-${username}`;
-  audio.autoplay = true;
+  audio.id        = `audio-${username}`;
+  audio.autoplay  = true;
   audio.srcObject = remoteStream;
   $('audio-elements').appendChild(audio);
 
@@ -371,7 +468,7 @@ async function getOrCreatePc(username) {
 function removeAudio(u) { document.getElementById(`audio-${u}`)?.remove(); }
 
 async function initiateCall(username) {
-  const pc = await getOrCreatePc(username);
+  const pc    = await getOrCreatePc(username);
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   await waitIce(pc);
@@ -495,7 +592,7 @@ async function fetchHistory() {
   $('messages').innerHTML = '';
 
   for (const row of [...data].reverse()) {
-    if (!row.from_user) continue; // skip malformed rows
+    if (!row.from_user) continue;
     const att = row.attachment_url
       ? { url: row.attachment_url, kind: row.attachment_kind || 'image', filename: row.attachment_filename || 'attachment' }
       : null;
@@ -517,7 +614,6 @@ function trySend() {
 }
 
 async function uploadMedia(file) {
-  const ext      = file.name.split('.').pop().toLowerCase() || 'bin';
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
   const path     = `chat/${myUserId}/${Date.now()}-${safeName}`;
 
@@ -538,9 +634,7 @@ async function uploadMedia(file) {
   $('message-input').textContent = '';
   $('input-placeholder').style.display = '';
 
-  const att = { url, kind, filename };
-  appendMsg(myUsername, caption, new Date(), true, att);
-
+  appendMsg(myUsername, caption, new Date(), true, { url, kind, filename });
   await bcast('chat_media', { from: myUsername, content: caption, url, kind, filename });
   sb.from('messages').insert({
     from_user: myUsername, content: caption, channel: 'general',
@@ -569,7 +663,7 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     return;
   }
 
-  let target; // the element to append content/media into
+  let target;
 
   if (showHeader) {
     const group = document.createElement('div');
@@ -578,13 +672,14 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     const isOwn = from === myUsername;
     const color = isOwn ? '#5865f2' : '#f2f3f5';
     const bg    = avatarColor(from);
-    const peer  = peers[from];
-    const avUrl = isOwn ? myAvatarUrl : (peer?.avatarUrl ?? null);
+    const avUrl = isOwn ? myAvatarUrl : (peers[from]?.avatarUrl ?? null);
 
     const avatarEl = document.createElement('div');
-    avatarEl.className = 'msg-avatar';
+    avatarEl.className        = 'msg-avatar';
     avatarEl.style.background = bg;
-    avatarEl.innerHTML = avUrl ? `<img src="${esc(avUrl)}" alt="" loading="lazy">` : esc((from[0] ?? '?').toUpperCase());
+    avatarEl.innerHTML = avUrl
+      ? `<img src="${esc(avUrl)}" alt="" loading="lazy">`
+      : esc((from[0] ?? '?').toUpperCase());
     group.appendChild(avatarEl);
 
     const header = document.createElement('div');
@@ -636,19 +731,33 @@ function renderMembers() {
 }
 
 function makeMemberRow(username, avatarUrl, isSelf, voiceActive, speaking) {
-  const div  = document.createElement('div');
+  const div = document.createElement('div');
   div.className = `member-row${speaking ? ' speaking' : ''}`;
-  const bg   = avatarColor(username);
-  const ring = speaking ? ';box-shadow:0 0 0 2px #23a55a' : '';
+
+  const bg    = avatarColor(username);
+  const ring  = speaking ? ';box-shadow:0 0 0 2px #23a55a' : '';
   const inner = avatarUrl
     ? `<img src="${esc(avatarUrl)}" alt="" loading="lazy">`
     : esc((username[0] ?? '?').toUpperCase());
+
   div.innerHTML = `
     <div class="avatar avatar-sm" style="background:${bg}${ring}">${inner}</div>
     <div class="member-info">
       <div class="member-name">${esc(username)}${isSelf ? ' <span style="color:var(--text-muted);font-size:11px">(You)</span>' : ''}</div>
       <div class="member-status" style="color:${voiceActive ? 'var(--green)' : 'var(--text-muted)'}">${voiceActive ? 'In voice' : 'Online'}</div>
     </div>`;
+
+  // Own row opens profile edit modal; peer rows open the inspect card
+  div.addEventListener('click', e => {
+    e.stopPropagation();
+    if (isSelf) {
+      closeInspectPanel();
+      openProfileModal();
+    } else {
+      openInspectPanel(username, e.clientY);
+    }
+  });
+
   return div;
 }
 
@@ -715,9 +824,7 @@ function showScreen(id) {
   $(id).style.display = 'flex';
 }
 
-function scrollBottom() {
-  const m = $('messages'); m.scrollTop = m.scrollHeight;
-}
+function scrollBottom() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
 
 function avatarColor(username) {
   let h = 0;
