@@ -58,8 +58,21 @@ async function init() {
   }
 }
 
+let authMode = 'signin'; // 'signin' | 'signup'
+
 function bindInputEvents() {
   $('login-form').addEventListener('submit', handleLogin);
+  $('auth-toggle-link').addEventListener('click', e => {
+    e.preventDefault();
+    authMode = authMode === 'signin' ? 'signup' : 'signin';
+    const isSignup = authMode === 'signup';
+    $('username-row').style.display     = isSignup ? '' : 'none';
+    $('login-btn').textContent          = isSignup ? 'Create Account' : 'Sign In';
+    $('auth-toggle-text').textContent   = isSignup ? 'Already have an account?' : "Don't have an account?";
+    $('auth-toggle-link').textContent   = isSignup ? 'Sign in' : 'Create one';
+    $('login-error').textContent        = '';
+    if (isSignup) $('login-username').focus(); else $('login-email').focus();
+  });
   $('logout-btn').addEventListener('click', handleLogout);
   $('voice-toggle-btn').addEventListener('click', toggleVoice);
   $('mute-btn').addEventListener('click', toggleMute);
@@ -87,13 +100,39 @@ async function handleLogin(e) {
   $('login-error').textContent = '';
   setLoginBusy(true);
 
-  const { data, error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) {
-    $('login-error').textContent = error.message;
-    setLoginBusy(false);
-    return;
+  if (authMode === 'signup') {
+    const username = $('login-username').value.trim();
+    if (!username) {
+      $('login-error').textContent = 'Please enter a username.';
+      setLoginBusy(false);
+      return;
+    }
+
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) {
+      $('login-error').textContent = error.message;
+      setLoginBusy(false);
+      return;
+    }
+
+    // Insert the profile row so username is set from the start
+    await sb.from('profiles').upsert({
+      id:       data.user.id,
+      username,
+      avatar_url:  null,
+      description: '',
+    });
+
+    await enterChat(data.session);
+  } else {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      $('login-error').textContent = error.message;
+      setLoginBusy(false);
+      return;
+    }
+    await enterChat(data.session);
   }
-  await enterChat(data.session);
 }
 
 function setLoginBusy(busy) {

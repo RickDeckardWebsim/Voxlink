@@ -23,6 +23,10 @@
     <h2>Welcome back</h2>
     <p class="login-sub">Sign in to continue chatting</p>
     <form id="login-form">
+      <div id="username-row" style="display:none">
+        <label>Username</label>
+        <input type="text" id="login-username" placeholder="Your display name" autocomplete="username" maxlength="32">
+      </div>
       <label>Email</label>
       <input type="email" id="login-email" placeholder="you@example.com" required autocomplete="email">
       <label>Password</label>
@@ -30,7 +34,10 @@
       <div id="login-error" class="error-text"></div>
       <button type="submit" id="login-btn" class="btn-primary">Sign In</button>
     </form>
-    <p class="login-footer">Don't have an account? Ask your server admin.</p>
+    <p class="login-footer">
+      <span id="auth-toggle-text">Don't have an account?</span>
+      <a href="#" id="auth-toggle-link" style="color:var(--blurple);text-decoration:none;margin-left:4px">Create one</a>
+    </p>
   </div>
 </div>
 
