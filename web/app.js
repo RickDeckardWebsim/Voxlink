@@ -5,11 +5,11 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const SUPABASE_URL     = 'https://syftqwloslmnjyvppler.supabase.co';
+const SUPABASE_URL      = 'https://syftqwloslmnjyvppler.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_VK3kO0lX4tTsrHlCsH6JFQ_ebB6_lMH';
-const CHANNEL_NAME     = 'p2p-signaling';
-const SPEAKING_THRESHOLD = 0.01;
-const SILENCE_HOLD_FRAMES = 8; // × 100 ms = 800 ms
+const CHANNEL_NAME      = 'p2p-signaling';
+const SPEAKING_THRESHOLD  = 0.01;
+const SILENCE_HOLD_FRAMES = 8;   // × 100 ms = 800 ms
 
 const RTC_CONFIG = {
   iceServers: [
@@ -18,7 +18,7 @@ const RTC_CONFIG = {
   ],
 };
 
-// Avatar palette matches desktop theme.rs
+// Avatar palette matches desktop theme.rs exactly
 const AVATAR_PALETTE = [
   '#5865f2','#3ba55d','#eb459e','#f0b232',
   '#ed4245','#17a8e3','#9c59d1','#1abc9c',
@@ -29,10 +29,10 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let myUserId, myUsername, myAvatarUrl, myDescription;
-let sigChannel;                 // Supabase Realtime channel
-const peers       = {};         // username → { avatarUrl, description, inVoice, isSpeaking }
-const peerConns   = {};         // username → RTCPeerConnection
-const respondedTo = new Set();  // peers we've already sent a peer_join reply to
+let sigChannel;
+const peers       = {};
+const peerConns   = {};
+const respondedTo = new Set();
 
 let localStream   = null;
 let audioCtx      = null;
@@ -42,53 +42,68 @@ let isMuted       = false;
 let amSpeaking    = false;
 let silenceFrames = 0;
 let lastMsgAuthor = null;
+let authMode      = 'signin';
 
 // ── DOM shortcuts ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  bindInputEvents();
-
+  bindEvents();
   const { data: { session } } = await sb.auth.getSession();
-  if (session) {
-    await enterChat(session);
-  } else {
-    showScreen('login-screen');
-  }
+  if (session) await enterChat(session);
+  else showScreen('login-screen');
 }
 
-let authMode = 'signin'; // 'signin' | 'signup'
-
-function bindInputEvents() {
+function bindEvents() {
+  // Auth
   $('login-form').addEventListener('submit', handleLogin);
   $('auth-toggle-link').addEventListener('click', e => {
     e.preventDefault();
     authMode = authMode === 'signin' ? 'signup' : 'signin';
-    const isSignup = authMode === 'signup';
-    $('username-row').style.display     = isSignup ? '' : 'none';
-    $('login-btn').textContent          = isSignup ? 'Create Account' : 'Sign In';
-    $('auth-toggle-text').textContent   = isSignup ? 'Already have an account?' : "Don't have an account?";
-    $('auth-toggle-link').textContent   = isSignup ? 'Sign in' : 'Create one';
-    $('login-error').textContent        = '';
-    if (isSignup) $('login-username').focus(); else $('login-email').focus();
+    const up = authMode === 'signup';
+    $('username-row').style.display    = up ? '' : 'none';
+    $('login-btn').textContent         = up ? 'Create Account' : 'Sign In';
+    $('auth-toggle-text').textContent  = up ? 'Already have an account?' : "Don't have an account?";
+    $('auth-toggle-link').textContent  = up ? 'Sign in' : 'Create one';
+    $('login-error').textContent       = '';
+    (up ? $('login-username') : $('login-email')).focus();
   });
+
+  // Chat
   $('logout-btn').addEventListener('click', handleLogout);
   $('voice-toggle-btn').addEventListener('click', toggleVoice);
   $('mute-btn').addEventListener('click', toggleMute);
   $('send-btn').addEventListener('click', trySend);
 
   const input = $('message-input');
+  const ph    = $('input-placeholder');
+  input.addEventListener('input', () => { ph.style.display = input.textContent.trim() ? 'none' : ''; });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trySend(); } });
 
-  // Show/hide placeholder
-  const ph = $('input-placeholder');
-  input.addEventListener('input', () => {
-    ph.style.display = input.textContent.trim() ? 'none' : '';
+  // Media attach
+  $('attach-btn').addEventListener('click', () => $('file-input').click());
+  $('file-input').addEventListener('change', e => {
+    if (e.target.files[0]) uploadMedia(e.target.files[0]);
+    e.target.value = '';
   });
 
-  // Enter sends; Shift+Enter allows newline
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trySend(); }
+  // Profile bar click → open modal
+  $('profile-bar').addEventListener('click', openProfileModal);
+  $('profile-bar').style.cursor = 'pointer';
+
+  // Profile modal
+  $('profile-close-btn').addEventListener('click', closeProfileModal);
+  $('profile-cancel-btn').addEventListener('click', closeProfileModal);
+  $('profile-save-btn').addEventListener('click', saveProfile);
+  $('profile-modal').addEventListener('click', e => { if (e.target === $('profile-modal')) closeProfileModal(); });
+  $('profile-avatar-preview').addEventListener('click', () => $('profile-avatar-input').click());
+  $('profile-avatar-input').addEventListener('change', e => {
+    if (e.target.files[0]) uploadProfileAvatar(e.target.files[0]);
+    e.target.value = '';
+  });
+  $('profile-desc-input').addEventListener('input', () => {
+    $('profile-desc-count').textContent = $('profile-desc-input').value.length;
   });
 }
 
@@ -102,42 +117,23 @@ async function handleLogin(e) {
 
   if (authMode === 'signup') {
     const username = $('login-username').value.trim();
-    if (!username) {
-      $('login-error').textContent = 'Please enter a username.';
-      setLoginBusy(false);
-      return;
-    }
+    if (!username) { $('login-error').textContent = 'Please enter a username.'; setLoginBusy(false); return; }
 
     const { data, error } = await sb.auth.signUp({ email, password });
-    if (error) {
-      $('login-error').textContent = error.message;
-      setLoginBusy(false);
-      return;
-    }
+    if (error) { $('login-error').textContent = error.message; setLoginBusy(false); return; }
 
-    // Insert the profile row so username is set from the start
-    await sb.from('profiles').upsert({
-      id:       data.user.id,
-      username,
-      avatar_url:  null,
-      description: '',
-    });
-
+    await sb.from('profiles').upsert({ id: data.user.id, username, avatar_url: null, description: '' });
     await enterChat(data.session);
   } else {
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) {
-      $('login-error').textContent = error.message;
-      setLoginBusy(false);
-      return;
-    }
+    if (error) { $('login-error').textContent = error.message; setLoginBusy(false); return; }
     await enterChat(data.session);
   }
 }
 
 function setLoginBusy(busy) {
-  $('login-btn').disabled = busy;
-  $('login-btn').textContent = busy ? 'Signing in…' : 'Sign In';
+  $('login-btn').disabled    = busy;
+  $('login-btn').textContent = busy ? 'Signing in…' : (authMode === 'signup' ? 'Create Account' : 'Sign In');
 }
 
 async function handleLogout() {
@@ -174,16 +170,94 @@ async function cleanup() {
   respondedTo.clear();
 }
 
+// ── Profile modal ─────────────────────────────────────────────────────────────
+function openProfileModal() {
+  $('profile-username-input').value  = myUsername    ?? '';
+  $('profile-desc-input').value      = myDescription ?? '';
+  $('profile-desc-count').textContent = ($('profile-desc-input').value.length);
+  $('profile-modal-error').textContent = '';
+  renderProfileModalAvatar();
+  $('profile-modal').style.display = 'flex';
+}
+
+function closeProfileModal() {
+  $('profile-modal').style.display = 'none';
+}
+
+function renderProfileModalAvatar() {
+  const el = $('profile-avatar-preview');
+  el.style.background = avatarColor(myUsername ?? 'User');
+  el.innerHTML = myAvatarUrl
+    ? `<img src="${esc(myAvatarUrl)}" alt="">`
+    : esc((myUsername?.[0] ?? 'U').toUpperCase());
+}
+
+async function saveProfile() {
+  const username    = $('profile-username-input').value.trim();
+  const description = $('profile-desc-input').value;
+  if (!username) { $('profile-modal-error').textContent = 'Username cannot be empty.'; return; }
+
+  const btn = $('profile-save-btn');
+  btn.disabled    = true;
+  btn.textContent = 'Saving…';
+  $('profile-modal-error').textContent = '';
+
+  const { error } = await sb.from('profiles').update({ username, description }).eq('id', myUserId);
+  if (error) {
+    $('profile-modal-error').textContent = error.message;
+    btn.disabled = false; btn.textContent = 'Save Changes';
+    return;
+  }
+
+  const oldUsername = myUsername;
+  myUsername    = username;
+  myDescription = description;
+
+  renderProfileBar();
+  renderMembers();
+
+  await bcast('profile_update', {
+    from:         oldUsername,
+    new_username: myUsername,
+    avatar_url:   myAvatarUrl,
+    description:  myDescription,
+  });
+
+  btn.disabled = false; btn.textContent = 'Save Changes';
+  closeProfileModal();
+}
+
+async function uploadProfileAvatar(file) {
+  const ext  = file.name.split('.').pop().toLowerCase() || 'png';
+  const path = `${myUserId}_avatar.${ext}`;
+
+  $('profile-save-btn').disabled    = true;
+  $('profile-modal-error').textContent = '';
+
+  const { error } = await sb.storage.from('avatars').upload(path, file, { contentType: file.type, upsert: true });
+  if (error) {
+    $('profile-modal-error').textContent = `Upload failed: ${error.message}`;
+    $('profile-save-btn').disabled = false;
+    return;
+  }
+
+  myAvatarUrl = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}?t=${Date.now()}`;
+  await sb.from('profiles').update({ avatar_url: myAvatarUrl }).eq('id', myUserId);
+
+  renderProfileBar();
+  renderProfileModalAvatar();
+  $('profile-save-btn').disabled = false;
+}
+
 // ── Signaling ─────────────────────────────────────────────────────────────────
 function connectSignaling() {
-  sigChannel = sb.channel(CHANNEL_NAME, {
-    config: { broadcast: { self: false } },
-  });
+  sigChannel = sb.channel(CHANNEL_NAME, { config: { broadcast: { self: false } } });
 
   sigChannel
     .on('broadcast', { event: 'peer_join'      }, ({ payload }) => onPeerJoin(payload))
     .on('broadcast', { event: 'peer_leave'     }, ({ payload }) => onPeerLeave(payload))
     .on('broadcast', { event: 'chat_message'   }, ({ payload }) => onChatMessage(payload))
+    .on('broadcast', { event: 'chat_media'     }, ({ payload }) => onChatMedia(payload))
     .on('broadcast', { event: 'voice_state'    }, ({ payload }) => onVoiceState(payload))
     .on('broadcast', { event: 'profile_update' }, ({ payload }) => onProfileUpdate(payload))
     .on('broadcast', { event: 'sdp_offer'      }, ({ payload }) => onSdpOffer(payload))
@@ -207,23 +281,18 @@ async function onPeerJoin({ from, avatar_url, description }) {
   const isNew = !peers[from];
   peers[from] = {
     ...peers[from],
-    avatarUrl:   avatar_url ?? peers[from]?.avatarUrl ?? null,
-    description: description ?? peers[from]?.description ?? '',
+    avatarUrl:   avatar_url   ?? peers[from]?.avatarUrl   ?? null,
+    description: description  ?? peers[from]?.description ?? '',
     inVoice:     peers[from]?.inVoice    ?? false,
     isSpeaking:  peers[from]?.isSpeaking ?? false,
   };
 
   if (isNew) sysMsg(`${from} joined the room.`);
 
-  // Send our presence back ONCE so they know we're here
   if (!respondedTo.has(from)) {
     respondedTo.add(from);
     await bcast('peer_join', { from: myUsername, avatar_url: myAvatarUrl, description: myDescription });
-
-    // WebRTC: the peer whose username comes first alphabetically initiates
-    if (myUsername < from && inVoice) {
-      await initiateCall(from);
-    }
+    if (myUsername < from && inVoice) await initiateCall(from);
   }
 
   renderMembers();
@@ -246,6 +315,12 @@ function onChatMessage({ from, content }) {
   appendMsg(from, content);
 }
 
+// Real-time media message from desktop or another web user
+function onChatMedia({ from, content, url, kind, filename }) {
+  if (!from || !url) return;
+  appendMsg(from, content || '', new Date(), true, { url, kind: kind || 'image', filename: filename || 'attachment' });
+}
+
 function onVoiceState({ from, speaking, muted, in_voice }) {
   if (!from || from === myUsername) return;
   if (!peers[from]) peers[from] = { inVoice: false, isSpeaking: false, avatarUrl: null, description: '' };
@@ -259,9 +334,9 @@ function onProfileUpdate({ from, new_username, avatar_url, description }) {
   if (!from || from === myUsername) return;
   const old = peers[from];
   if (!old) return;
-  const entry = { ...old, avatarUrl: avatar_url ?? old.avatarUrl, description: description ?? old.description };
-  delete peers[from];
-  peers[new_username ?? from] = entry;
+  const target = new_username ?? from;
+  peers[target] = { ...old, avatarUrl: avatar_url ?? old.avatarUrl, description: description ?? old.description };
+  if (target !== from) delete peers[from];
   renderMembers();
 }
 
@@ -272,14 +347,10 @@ async function getOrCreatePc(username) {
   const pc = new RTCPeerConnection(RTC_CONFIG);
   peerConns[username] = pc;
 
-  // Attach local audio if we're in voice
   if (localStream) {
-    for (const track of localStream.getAudioTracks()) {
-      pc.addTrack(track, localStream);
-    }
+    for (const track of localStream.getAudioTracks()) pc.addTrack(track, localStream);
   }
 
-  // Play incoming audio
   const remoteStream = new MediaStream();
   const audio = document.createElement('audio');
   audio.id = `audio-${username}`;
@@ -288,21 +359,16 @@ async function getOrCreatePc(username) {
   $('audio-elements').appendChild(audio);
 
   pc.ontrack = e => { e.streams[0]?.getTracks().forEach(t => remoteStream.addTrack(t)); };
-
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-      pc.close();
-      delete peerConns[username];
-      removeAudio(username);
+      pc.close(); delete peerConns[username]; removeAudio(username);
     }
   };
 
   return pc;
 }
 
-function removeAudio(username) {
-  document.getElementById(`audio-${username}`)?.remove();
-}
+function removeAudio(u) { document.getElementById(`audio-${u}`)?.remove(); }
 
 async function initiateCall(username) {
   const pc = await getOrCreatePc(username);
@@ -325,21 +391,13 @@ async function onSdpOffer({ from, to, sdp }) {
 async function onSdpAnswer({ from, to, sdp }) {
   if (to !== myUsername) return;
   const pc = peerConns[from];
-  if (pc && pc.signalingState === 'have-local-offer') {
-    await pc.setRemoteDescription({ type: 'answer', sdp });
-  }
+  if (pc && pc.signalingState === 'have-local-offer') await pc.setRemoteDescription({ type: 'answer', sdp });
 }
 
-// Wait for ICE gathering to complete (max 5 s) before sending SDP.
-// This bundles all ICE candidates into a single SDP, matching the desktop client.
 function waitIce(pc) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return Promise.race([
-    new Promise(r => {
-      pc.onicegatheringstatechange = () => {
-        if (pc.iceGatheringState === 'complete') r();
-      };
-    }),
+    new Promise(r => { pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') r(); }; }),
     new Promise(r => setTimeout(r, 5000)),
   ]);
 }
@@ -360,21 +418,15 @@ async function joinVoice() {
 
   inVoice = true;
 
-  // Add audio track to any existing peer connections and renegotiate
   for (const [username, pc] of Object.entries(peerConns)) {
     for (const track of localStream.getAudioTracks()) {
-      if (!pc.getSenders().some(s => s.track === track)) {
-        pc.addTrack(track, localStream);
-      }
+      if (!pc.getSenders().some(s => s.track === track)) pc.addTrack(track, localStream);
     }
     if (myUsername < username) await initiateCall(username);
   }
 
-  // Start new connections with peers we haven't called yet
   for (const username of Object.keys(peers)) {
-    if (!peerConns[username] && myUsername < username) {
-      await initiateCall(username);
-    }
+    if (!peerConns[username] && myUsername < username) await initiateCall(username);
   }
 
   startSpeakingDetection();
@@ -383,14 +435,10 @@ async function joinVoice() {
 }
 
 async function leaveVoice() {
-  inVoice    = false;
-  amSpeaking = false;
-  silenceFrames = 0;
-
+  inVoice = false; amSpeaking = false; silenceFrames = 0;
   if (speakingTimer) { clearInterval(speakingTimer); speakingTimer = null; }
   if (audioCtx)      { audioCtx.close();             audioCtx      = null; }
   if (localStream)   { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-
   await bcast('voice_state', { from: myUsername, speaking: false, muted: isMuted, in_voice: false });
   renderVoiceUI();
 }
@@ -412,8 +460,7 @@ function startSpeakingDetection() {
 
   speakingTimer = setInterval(() => {
     analyser.getFloatTimeDomainData(buf);
-    let sum = 0;
-    for (const v of buf) sum += v * v;
+    let sum = 0; for (const v of buf) sum += v * v;
     const rms = Math.sqrt(sum / buf.length);
 
     if (rms > SPEAKING_THRESHOLD) {
@@ -438,7 +485,7 @@ function startSpeakingDetection() {
 async function fetchHistory() {
   const { data } = await sb
     .from('messages')
-    .select('*')
+    .select('from_user, content, attachment_url, attachment_kind, attachment_filename, created_at')
     .eq('channel', 'general')
     .order('created_at', { ascending: false })
     .limit(100);
@@ -446,8 +493,13 @@ async function fetchHistory() {
   if (!data) return;
   lastMsgAuthor = null;
   $('messages').innerHTML = '';
+
   for (const row of [...data].reverse()) {
-    appendMsg(row.from_user, row.content, new Date(row.created_at), false);
+    if (!row.from_user) continue; // skip malformed rows
+    const att = row.attachment_url
+      ? { url: row.attachment_url, kind: row.attachment_kind || 'image', filename: row.attachment_filename || 'attachment' }
+      : null;
+    appendMsg(row.from_user, row.content || '', new Date(row.created_at), false, att);
   }
   scrollBottom();
 }
@@ -461,154 +513,196 @@ function trySend() {
 
   bcast('chat_message', { from: myUsername, content });
   appendMsg(myUsername, content);
-
   sb.from('messages').insert({ from_user: myUsername, content, channel: 'general' });
 }
 
+async function uploadMedia(file) {
+  const ext      = file.name.split('.').pop().toLowerCase() || 'bin';
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
+  const path     = `chat/${myUserId}/${Date.now()}-${safeName}`;
+
+  $('attach-btn').disabled    = true;
+  $('attach-btn').textContent = '…';
+
+  const { error } = await sb.storage.from('avatars').upload(path, file, { contentType: file.type });
+
+  $('attach-btn').disabled    = false;
+  $('attach-btn').textContent = '+';
+
+  if (error) { sysMsg(`Upload failed: ${error.message}`); return; }
+
+  const url      = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}`;
+  const kind     = kindForMime(file.type);
+  const filename = file.name;
+  const caption  = $('message-input').textContent.trim();
+  $('message-input').textContent = '';
+  $('input-placeholder').style.display = '';
+
+  const att = { url, kind, filename };
+  appendMsg(myUsername, caption, new Date(), true, att);
+
+  await bcast('chat_media', { from: myUsername, content: caption, url, kind, filename });
+  sb.from('messages').insert({
+    from_user: myUsername, content: caption, channel: 'general',
+    attachment_url: url, attachment_kind: kind, attachment_filename: filename,
+  });
+}
+
+function kindForMime(mime) {
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  return 'image';
+}
+
 // ── Rendering ─────────────────────────────────────────────────────────────────
-function appendMsg(from, content, ts = new Date(), scroll = true) {
-  const container = $('messages');
+function appendMsg(from, content, ts = new Date(), scroll = true, attachment = null) {
+  const container  = $('messages');
   const showHeader = from !== lastMsgAuthor;
-  lastMsgAuthor = from;
+  lastMsgAuthor    = from;
 
-  const isSystem = (from === '__system');
-
-  if (isSystem) {
+  if (from === '__system') {
     const div = document.createElement('div');
-    div.className = 'system-msg';
+    div.className   = 'system-msg';
     div.textContent = content;
     container.appendChild(div);
-  } else if (showHeader) {
+    if (scroll) scrollBottom();
+    return;
+  }
+
+  let target; // the element to append content/media into
+
+  if (showHeader) {
     const group = document.createElement('div');
     group.className = 'msg-group';
 
-    const isOwn  = from === myUsername;
-    const color  = isOwn ? '#5865f2' : '#f2f3f5';
-    const bgColor = avatarColor(from);
-    const peerData = peers[from];
-    const avatarUrl = isOwn ? myAvatarUrl : (peerData?.avatarUrl ?? null);
+    const isOwn = from === myUsername;
+    const color = isOwn ? '#5865f2' : '#f2f3f5';
+    const bg    = avatarColor(from);
+    const peer  = peers[from];
+    const avUrl = isOwn ? myAvatarUrl : (peer?.avatarUrl ?? null);
 
-    group.innerHTML = `
-      <div class="msg-avatar" style="background:${bgColor}" data-user="${esc(from)}">
-        ${avatarUrl ? `<img src="${esc(avatarUrl)}" alt="" loading="lazy">` : esc(from[0] ?? '?')}
-      </div>
-      <div class="msg-header">
-        <span class="msg-author" style="color:${color}">${esc(from)}</span>
-        <span class="msg-time">${fmtTime(ts)}</span>
-      </div>
-      <div class="msg-content">${esc(content)}</div>
-    `;
+    const avatarEl = document.createElement('div');
+    avatarEl.className = 'msg-avatar';
+    avatarEl.style.background = bg;
+    avatarEl.innerHTML = avUrl ? `<img src="${esc(avUrl)}" alt="" loading="lazy">` : esc((from[0] ?? '?').toUpperCase());
+    group.appendChild(avatarEl);
+
+    const header = document.createElement('div');
+    header.className = 'msg-header';
+    header.innerHTML = `<span class="msg-author" style="color:${color}">${esc(from)}</span><span class="msg-time">${fmtTime(ts)}</span>`;
+    group.appendChild(header);
+
     container.appendChild(group);
+    target = group;
   } else {
-    // Continuation — append another content line under last group
-    const last = container.lastElementChild;
-    if (last && last.classList.contains('msg-group')) {
-      const div = document.createElement('div');
-      div.className = 'msg-content';
-      div.textContent = content;
-      last.appendChild(div);
+    target = container.lastElementChild ?? container;
+  }
+
+  if (content) {
+    const div = document.createElement('div');
+    div.className   = 'msg-content';
+    div.textContent = content;
+    target.appendChild(div);
+  }
+
+  if (attachment?.url) {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg-content';
+    if (attachment.kind === 'audio') {
+      wrap.innerHTML = `<audio controls class="msg-audio" src="${esc(attachment.url)}"></audio>`;
+    } else if (attachment.kind === 'video') {
+      wrap.innerHTML = `<video controls class="msg-video" src="${esc(attachment.url)}"></video>`;
+    } else {
+      wrap.innerHTML = `<img class="msg-img" src="${esc(attachment.url)}" alt="${esc(attachment.filename)}" loading="lazy">`;
     }
+    target.appendChild(wrap);
   }
 
   if (scroll) scrollBottom();
 }
 
-function sysMsg(text) {
-  appendMsg('__system', text);
-}
+function sysMsg(text) { appendMsg('__system', text); }
 
 function renderMembers() {
-  const list = $('member-list');
+  const list  = $('member-list');
   const count = Object.keys(peers).length + 1;
   $('members-header').textContent = `ONLINE  ${count}`;
-  $('peer-count').textContent = `${count} online`;
+  $('peer-count').textContent     = `${count} online`;
   list.innerHTML = '';
-
-  // Self first
-  list.appendChild(makeMemberRow(myUsername, myAvatarUrl, true, inVoice, amSpeaking && !isMuted));
-
-  for (const [username, peer] of Object.entries(peers)) {
-    list.appendChild(makeMemberRow(username, peer.avatarUrl, false, peer.inVoice, peer.isSpeaking));
+  list.appendChild(makeMemberRow(myUsername, myAvatarUrl, true,  inVoice, amSpeaking && !isMuted));
+  for (const [u, p] of Object.entries(peers)) {
+    list.appendChild(makeMemberRow(u, p.avatarUrl, false, p.inVoice, p.isSpeaking));
   }
 }
 
 function makeMemberRow(username, avatarUrl, isSelf, voiceActive, speaking) {
-  const div = document.createElement('div');
+  const div  = document.createElement('div');
   div.className = `member-row${speaking ? ' speaking' : ''}`;
-
-  const bg    = avatarColor(username);
+  const bg   = avatarColor(username);
+  const ring = speaking ? ';box-shadow:0 0 0 2px #23a55a' : '';
   const inner = avatarUrl
     ? `<img src="${esc(avatarUrl)}" alt="" loading="lazy">`
     : esc((username[0] ?? '?').toUpperCase());
-
   div.innerHTML = `
-    <div class="avatar avatar-sm" style="background:${bg}${speaking ? ';box-shadow:0 0 0 2px #23a55a' : ''}">${inner}</div>
+    <div class="avatar avatar-sm" style="background:${bg}${ring}">${inner}</div>
     <div class="member-info">
       <div class="member-name">${esc(username)}${isSelf ? ' <span style="color:var(--text-muted);font-size:11px">(You)</span>' : ''}</div>
       <div class="member-status" style="color:${voiceActive ? 'var(--green)' : 'var(--text-muted)'}">${voiceActive ? 'In voice' : 'Online'}</div>
-    </div>
-  `;
+    </div>`;
   return div;
 }
 
 function renderVoiceParticipants() {
-  const container = $('voice-participants');
+  const c = $('voice-participants');
   const voicePeers = Object.entries(peers).filter(([, p]) => p.inVoice);
-
-  if (!inVoice && voicePeers.length === 0) { container.innerHTML = ''; return; }
-
-  container.innerHTML = '';
-  if (inVoice) container.appendChild(makeVoiceRow(myUsername, myAvatarUrl, amSpeaking && !isMuted));
-  for (const [u, p] of voicePeers) container.appendChild(makeVoiceRow(u, p.avatarUrl, p.isSpeaking));
+  if (!inVoice && voicePeers.length === 0) { c.innerHTML = ''; return; }
+  c.innerHTML = '';
+  if (inVoice) c.appendChild(makeVoiceRow(myUsername, myAvatarUrl, amSpeaking && !isMuted));
+  for (const [u, p] of voicePeers) c.appendChild(makeVoiceRow(u, p.avatarUrl, p.isSpeaking));
 }
 
 function makeVoiceRow(username, avatarUrl, speaking) {
-  const div = document.createElement('div');
+  const div   = document.createElement('div');
   div.className = `voice-participant${speaking ? ' speaking' : ''}`;
   const bg    = avatarColor(username);
+  const ring  = speaking ? ';box-shadow:0 0 0 2px #23a55a' : '';
   const inner = avatarUrl
-    ? `<img src="${esc(avatarUrl)}" alt="" loading="lazy" style="width:20px;height:20px;border-radius:50%;object-fit:cover">`
+    ? `<img src="${esc(avatarUrl)}" alt="" style="width:20px;height:20px;border-radius:50%;object-fit:cover">`
     : esc((username[0] ?? '?').toUpperCase());
   div.innerHTML = `
-    <div class="avatar avatar-xs" style="background:${bg}${speaking ? ';box-shadow:0 0 0 2px #23a55a' : ''}">${inner}</div>
-    <span>${esc(username)}</span>
-  `;
+    <div class="avatar avatar-xs" style="background:${bg}${ring}">${inner}</div>
+    <span>${esc(username)}</span>`;
   return div;
 }
 
 function renderVoiceUI() {
   const btn = $('voice-toggle-btn');
   const dot = $('voice-indicator');
-  const row = $('voice-row');
-
   if (inVoice) {
-    btn.textContent = 'Leave';
-    btn.className   = 'voice-join-btn leave';
+    btn.textContent = 'Leave'; btn.className = 'voice-join-btn leave';
     dot.className   = 'voice-dot live';
-    row.className   = 'channel-item active';
+    $('voice-row').className = 'channel-item active';
     $('mute-btn').style.display = '';
-    $('mute-btn').className = `icon-btn${isMuted ? ' muted' : ''}`;
-    $('mute-btn').title     = isMuted ? 'Unmute' : 'Mute';
-    $('mute-btn').textContent = isMuted ? '🔇' : '🎙';
+    $('mute-btn').className     = `icon-btn${isMuted ? ' muted' : ''}`;
+    $('mute-btn').title         = isMuted ? 'Unmute' : 'Mute';
+    $('mute-btn').textContent   = isMuted ? '🔇' : '🎙';
     $('self-status-bar').textContent = 'In voice';
     $('self-status-bar').style.color = 'var(--green)';
   } else {
-    btn.textContent = 'Join';
-    btn.className   = 'voice-join-btn';
+    btn.textContent = 'Join'; btn.className = 'voice-join-btn';
     dot.className   = 'voice-dot';
-    row.className   = 'channel-item';
+    $('voice-row').className = 'channel-item';
     $('mute-btn').style.display = 'none';
     $('self-status-bar').textContent = 'Online';
     $('self-status-bar').style.color = '';
   }
-
   renderVoiceParticipants();
 }
 
 function renderProfileBar() {
   const bg    = avatarColor(myUsername ?? 'User');
   const inner = myAvatarUrl
-    ? `<img src="${esc(myAvatarUrl)}" alt="" loading="lazy">`
+    ? `<img src="${esc(myAvatarUrl)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
     : esc((myUsername?.[0] ?? 'U').toUpperCase());
   $('self-avatar-bar').style.background = bg;
   $('self-avatar-bar').innerHTML        = inner;
@@ -622,8 +716,7 @@ function showScreen(id) {
 }
 
 function scrollBottom() {
-  const msgs = $('messages');
-  msgs.scrollTop = msgs.scrollHeight;
+  const m = $('messages'); m.scrollTop = m.scrollHeight;
 }
 
 function avatarColor(username) {
@@ -634,10 +727,8 @@ function avatarColor(username) {
 
 function esc(str) {
   return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function fmtTime(date) {

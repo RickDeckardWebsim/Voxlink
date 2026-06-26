@@ -100,6 +100,8 @@
 
     <div id="input-wrap">
       <div id="input-box">
+        <button id="attach-btn" class="icon-btn attach-btn" title="Attach image, audio, or video">+</button>
+        <input type="file" id="file-input" accept="image/*,audio/*,video/*" style="display:none">
         <span id="input-placeholder">Message #general…</span>
         <div
           id="message-input"
@@ -112,6 +114,31 @@
         ></div>
         <button id="send-btn" class="icon-btn send-btn" title="Send">↑</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Profile modal -->
+<div id="profile-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>Profile Settings</h3>
+      <button id="profile-close-btn" class="modal-close">✕</button>
+    </div>
+    <div class="profile-avatar-wrap">
+      <div id="profile-avatar-preview" class="avatar profile-avatar-lg" title="Click to upload avatar"></div>
+      <p class="hint">Click avatar to upload</p>
+      <input type="file" id="profile-avatar-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
+    </div>
+    <label class="field-label">USERNAME</label>
+    <input type="text" id="profile-username-input" class="field-input" maxlength="32">
+    <label class="field-label">ABOUT ME</label>
+    <textarea id="profile-desc-input" class="field-input field-textarea" maxlength="250" rows="3" placeholder="Tell people about yourself…"></textarea>
+    <div class="desc-count"><span id="profile-desc-count">0</span> / 250</div>
+    <div id="profile-modal-error" class="error-text"></div>
+    <div class="modal-actions">
+      <button id="profile-cancel-btn" class="btn-ghost">Cancel</button>
+      <button id="profile-save-btn" class="btn-primary btn-inline">Save Changes</button>
     </div>
   </div>
 </div>
