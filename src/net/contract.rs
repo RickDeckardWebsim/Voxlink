@@ -20,6 +20,8 @@ pub mod event {
     pub const PROFILE_UPDATE: &str  = "profile_update";
     pub const SDP_OFFER: &str       = "sdp_offer";
     pub const SDP_ANSWER: &str      = "sdp_answer";
+    pub const TYPING: &str        = "typing";
+    pub const REACTION: &str      = "reaction";
 }
 /// PostgREST `messages.channel` value.
 pub const DEFAULT_DB_CHANNEL: &str = "general";

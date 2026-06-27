@@ -21,6 +21,10 @@ pub enum SigCmd {
     BroadcastVoiceState { speaking: bool, muted: bool, in_voice: bool },
     /// Broadcast a display-name / avatar change so peers can update their peer list in real time.
     BroadcastProfileUpdate { new_username: String, avatar_url: Option<String>, description: Option<String> },
+    /// Broadcast a typing indicator ping.
+    BroadcastTyping { is_typing: bool },
+    /// Broadcast a reaction toggle.
+    BroadcastReaction { message_id: String, emoji: String, active: bool },
     /// Broadcast our departure, then close the WebSocket gracefully.
     BroadcastPeerLeave,
     Disconnect,
@@ -108,6 +112,24 @@ async fn connect_and_run(
             cmd_opt = sig_cmd_rx.recv() => {
                 if let Some(cmd) = cmd_opt {
                     match cmd {
+                        SigCmd::BroadcastTyping { is_typing } => {
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::TYPING, json!({
+                                "from":       username,
+                                "is_typing":  is_typing,
+                            }), &mut ref_count);
+                            let _ = send_text(&mut ws_stream, &broadcast).await;
+                        }
+                        SigCmd::BroadcastReaction { message_id, emoji, active } => {
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::REACTION, json!({
+                                "from":        username,
+                                "message_id":  message_id,
+                                "emoji":       emoji,
+                                "active":      active,
+                            }), &mut ref_count);
+                            let _ = send_text(&mut ws_stream, &broadcast).await;
+                        }
                         SigCmd::BroadcastPeerLeave => {
                             let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
                             let broadcast = make_broadcast(&topic, crate::net::contract::event::PEER_LEAVE, json!({
@@ -308,6 +330,28 @@ fn handle_incoming(
                         attachment,
                     });
                     ctx.request_repaint();
+                }
+                crate::net::contract::event::TYPING => {
+                    let is_typing = b_payload["is_typing"].as_bool().unwrap_or(false);
+                    let _ = net_tx.send(NetEvent::TypingUpdate {
+                        from: from.to_string(),
+                        is_typing,
+                    });
+                    ctx.request_repaint();
+                }
+                crate::net::contract::event::REACTION => {
+                    let message_id = b_payload["message_id"].as_str().unwrap_or("").to_string();
+                    let emoji      = b_payload["emoji"].as_str().unwrap_or("").to_string();
+                    let active     = b_payload["active"].as_bool().unwrap_or(true);
+                    if !message_id.is_empty() && !emoji.is_empty() {
+                        let _ = net_tx.send(NetEvent::ReactionUpdate {
+                            from: from.to_string(),
+                            message_id,
+                            emoji,
+                            active,
+                        });
+                        ctx.request_repaint();
+                    }
                 }
                 _ => {}
             }

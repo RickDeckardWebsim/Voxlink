@@ -366,6 +366,7 @@ pub fn upload_media_auto_refresh(
 
 #[derive(Deserialize)]
 struct DbMessage {
+    id:                  String,
     from_user:           String,
     content:             String,
     attachment_url:      Option<String>,
@@ -421,7 +422,7 @@ pub fn fetch_recent_messages(
 ) -> Result<Vec<crate::state::ChatMessage>> {
     let client = Client::new();
     let url = format!(
-        "{}/rest/v1/messages?channel=eq.{}&order=created_at.desc&limit=100",
+        "{}/rest/v1/messages?select=id,from_user,content,attachment_url,attachment_kind,attachment_filename,created_at&channel=eq.{}&order=created_at.desc&limit=100",
         contract::SUPABASE_URL,
         contract::DEFAULT_DB_CHANNEL
     );
@@ -463,10 +464,107 @@ pub fn fetch_recent_messages(
             kind,
             attachment,
             unix_ts:    0, // History messages never expire
+            reactions:  Vec::new(),       // hydrated by fetch_reactions on connect
+            db_id:      Some(row.id),     // DB UUID for reaction FKs
         }
     }).collect();
 
     Ok(messages)
+}
+// ── Reaction persistence ─────────────────────────────────────────────────────
+//
+// Required Supabase table (run once in the SQL editor):
+//
+//   CREATE TABLE IF NOT EXISTS reactions (
+//     message_id  UUID        NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+//     user        TEXT        NOT NULL,
+//     emoji       TEXT        NOT NULL,
+//     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+//     PRIMARY KEY (message_id, user, emoji)
+//   );
+//   ALTER TABLE reactions ENABLE ROW LEVEL SECURITY;
+//   CREATE POLICY rx_read   ON reactions FOR SELECT USING (true);
+//   CREATE POLICY rx_insert ON reactions FOR INSERT TO authenticated WITH CHECK (true);
+//   CREATE POLICY rx_delete ON reactions FOR DELETE TO authenticated USING (true);
+
+/// Insert a reaction (fire-and-forget). Composite PK prevents duplicates.
+pub fn insert_reaction(access_token: &str, message_id: &str, user: &str, emoji: &str) -> Result<()> {
+    let client = Client::new();
+    let url = format!("{}/rest/v1/reactions", contract::SUPABASE_URL);
+    let body = json!({
+        "message_id": message_id,
+        "user":       user,
+        "emoji":      emoji,
+    });
+    let res = client.post(&url)
+        .header("apikey",         contract::SUPABASE_ANON_KEY)
+        .header("Authorization",  format!("Bearer {}", access_token))
+        .header("Content-Type",   "application/json")
+        .header("Prefer",         "return=minimal")
+        .json(&body)
+        .send()?;
+    if !res.status().is_success() {
+        let err = res.text().unwrap_or_default();
+        log::warn!("[supabase] reaction insert failed: {}", err);
+    }
+    Ok(())
+}
+
+/// Delete a reaction (fire-and-forget).
+pub fn delete_reaction(access_token: &str, message_id: &str, user: &str, emoji: &str) -> Result<()> {
+    let client = Client::new();
+    let url = format!(
+        "{}/rest/v1/reactions?message_id=eq.{}&user=eq.{}&emoji=eq.{}",
+        contract::SUPABASE_URL, message_id, user, emoji
+    );
+    let res = client.delete(&url)
+        .header("apikey",         contract::SUPABASE_ANON_KEY)
+        .header("Authorization",  format!("Bearer {}", access_token))
+        .send()?;
+    if !res.status().is_success() {
+        let err = res.text().unwrap_or_default();
+        log::warn!("[supabase] reaction delete failed: {}", err);
+    }
+    Ok(())
+}
+
+/// Fetch all reactions for a set of message IDs. Returns a map of message_id → Vec<Reaction>.
+pub fn fetch_reactions(
+    access_token: &str,
+    message_ids: &[String],
+) -> Result<std::collections::HashMap<String, Vec<crate::state::Reaction>>> {
+    let client = Client::new();
+    let ids_csv = message_ids.join(",");
+    let url = format!(
+        "{}/rest/v1/reactions?select=message_id,user,emoji&message_id=in.({})",
+        contract::SUPABASE_URL, ids_csv
+    );
+
+    let res = client.get(&url)
+        .header("apikey",        contract::SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()?;
+
+    if !res.status().is_success() {
+        return Err(anyhow::anyhow!("Reactions fetch failed ({})", res.status()));
+    }
+
+    #[derive(Deserialize)]
+    struct DbReaction {
+        message_id: String,
+        user:       String,
+        emoji:      String,
+    }
+
+    let rows: Vec<DbReaction> = res.json()?;
+    let mut map: std::collections::HashMap<String, Vec<crate::state::Reaction>> = std::collections::HashMap::new();
+    for row in rows {
+        map.entry(row.message_id).or_default().push(crate::state::Reaction {
+            user:  row.user,
+            emoji: row.emoji,
+        });
+    }
+    Ok(map)
 }
 
 /// Convert an ISO 8601 timestamp to "HH:MM" for display.

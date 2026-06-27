@@ -122,6 +122,12 @@ pub struct Attachment {
     pub kind: AttachmentKind,
     pub filename: String,
 }
+/// A single emoji reaction on a chat message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reaction {
+    pub user: String,
+    pub emoji: String,
+}
 
 /// Value produced by the background avatar-upload thread.
 pub struct ProfileUploadResult {
@@ -157,6 +163,13 @@ pub struct ChatMessage {
     /// Persistent messages (Own/Peer) set this to 0 — they never expire.
     #[serde(default)]
     pub unix_ts: u64,
+    /// Emoji reactions on this message (hydrated from DB + live broadcasts).
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
+    /// The Supabase DB UUID of this message (for reaction FKs). None for system messages
+    /// and for live-sent messages until sync (Phase 1 limitation).
+    #[serde(default)]
+    pub db_id: Option<String>,
 }
 
 impl ChatMessage {
@@ -174,6 +187,8 @@ impl ChatMessage {
             kind: MessageKind::Own,
             attachment,
             unix_ts: 0,
+            reactions: Vec::new(),
+            db_id: None,
         }
     }
 
@@ -191,6 +206,8 @@ impl ChatMessage {
             kind: MessageKind::Peer,
             attachment,
             unix_ts: 0,
+            reactions: Vec::new(),
+            db_id: None,
         }
     }
 
@@ -203,6 +220,8 @@ impl ChatMessage {
             kind: MessageKind::System,
             attachment: None,
             unix_ts: unix_now(),
+            reactions: Vec::new(),
+            db_id: None,
         }
     }
 }
@@ -299,6 +318,10 @@ pub enum NetEvent {
     VoiceStateUpdate { from: String, speaking: bool, muted: bool, in_voice: bool },
     /// A peer changed their display name or avatar.
     ProfileUpdated { from: String, new_username: String, avatar_url: Option<String>, description: Option<String> },
+    /// A peer's typing state changed.
+    TypingUpdate { from: String, is_typing: bool },
+    /// A peer added or removed a reaction.
+    ReactionUpdate { from: String, message_id: String, emoji: String, active: bool },
 }
 
 /// Commands sent FROM the egui UI thread TO the async network task.
@@ -314,6 +337,10 @@ pub enum UiCommand {
     SetMuted(bool),
     /// User updated their display name or uploaded a new avatar; re-broadcast to all peers.
     ProfileUpdated { new_username: String, avatar_url: Option<String>, description: Option<String> },
+    /// Broadcast a typing indicator ping (throttled by the caller).
+    SendTyping(bool),
+    /// Toggle a reaction on a message (optimistic + broadcast + DB persist).
+    SendReaction { message_id: String, emoji: String, active: bool },
     Disconnect,
 }
 
@@ -401,6 +428,10 @@ pub struct AppState {
     pub next_message_id: u64,
     /// Set true when a new message arrives; consumed by the scroll area.
     pub scroll_to_bottom: bool,
+    /// Usernames currently typing (excluding self). Cleared on peer leave.
+    pub typing_users: Vec<String>,
+    /// Timestamp of the last outgoing typing ping (throttle: 1 ping / 3s).
+    pub last_typing_ping: std::time::Instant,
 
     // ── Voice ──
     pub voice_active: bool,
@@ -486,6 +517,8 @@ impl Default for AppState {
             message_input: String::new(),
             next_message_id: 0,
             scroll_to_bottom: false,
+            typing_users: Vec::new(),
+            last_typing_ping: std::time::Instant::now(),
             voice_active: false,
             is_muted: false,
             is_speaking: false,

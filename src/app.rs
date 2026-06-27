@@ -187,9 +187,36 @@ impl AppState {
                     let username     = self.username.clone();
                     let (tx, rx)     = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
-                        let result = crate::net::supabase::fetch_recent_messages(
+                        let messages = crate::net::supabase::fetch_recent_messages(
                             &access_token, &username,
                         ).map_err(|e| e.to_string());
+
+                        let result = match messages {
+                            Ok(msgs) => {
+                                let ids: Vec<String> = msgs.iter().filter_map(|m| m.db_id.clone()).collect();
+                                let reactions = if ids.is_empty() {
+                                    Ok(std::collections::HashMap::new())
+                                } else {
+                                    crate::net::supabase::fetch_reactions(&access_token, &ids)
+                                        .map_err(|e| e.to_string())
+                                };
+                                match reactions {
+                                    Ok(rxn_map) => {
+                                        let mut hydrated = msgs;
+                                        for msg in &mut hydrated {
+                                            if let Some(ref db_id) = msg.db_id {
+                                                if let Some(rxn) = rxn_map.get(db_id) {
+                                                    msg.reactions = rxn.clone();
+                                                }
+                                            }
+                                        }
+                                        Ok(hydrated)
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            Err(e) => Err(e),
+                        };
                         let _ = tx.send(result);
                     });
                     self.history_rx = Some(rx);
@@ -259,6 +286,29 @@ impl AppState {
                         peer.is_speaking = speaking;
                         peer.is_muted    = muted;
                         peer.in_voice    = in_voice;
+                    }
+                }
+            }
+
+            // ── Typing + reactions (fully wired in Task 6) ───────────────────
+            NetEvent::TypingUpdate { from, is_typing } => {
+                if is_typing {
+                    if !self.typing_users.contains(&from) {
+                        self.typing_users.push(from);
+                    }
+                } else {
+                    self.typing_users.retain(|u| u != &from);
+                }
+            }
+
+            NetEvent::ReactionUpdate { from, message_id, emoji, active } => {
+                if let Some(msg) = self.messages.iter_mut().find(|m| m.db_id.as_deref() == Some(&message_id)) {
+                    if active {
+                        if !msg.reactions.iter().any(|r| r.user == from && r.emoji == emoji) {
+                            msg.reactions.push(crate::state::Reaction { user: from, emoji });
+                        }
+                    } else {
+                        msg.reactions.retain(|r| !(r.user == from && r.emoji == emoji));
                     }
                 }
             }

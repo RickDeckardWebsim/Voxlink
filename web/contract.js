@@ -19,6 +19,8 @@ export const EVENTS = Object.freeze({
   PROFILE_UPDATE: 'profile_update',
   SDP_OFFER:      'sdp_offer',
   SDP_ANSWER:     'sdp_answer',
+  TYPING:         'typing',
+  REACTION:       'reaction',
 });
 
 // MIME → attachment kind. Spec §6. Anything not audio/* or video/* → 'image'.

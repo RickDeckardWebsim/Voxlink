@@ -74,10 +74,16 @@ pub fn draw_status_dot(painter: &Painter, center: Pos2, radius: f32, color: Colo
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 
-pub fn render_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool, avatar_url: Option<&str>) {
+pub fn render_message(
+    ui: &mut Ui,
+    msg: &ChatMessage,
+    show_header: bool,
+    avatar_url: Option<&str>,
+    local_username: &str,
+) -> Option<(String, String, bool)> {
     match msg.kind {
-        MessageKind::System => render_system_message(ui, msg),
-        _ => render_chat_message(ui, msg, show_header, avatar_url),
+        MessageKind::System => { render_system_message(ui, msg); None }
+        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username),
     }
 }
 
@@ -102,10 +108,17 @@ fn render_system_message(ui: &mut Ui, msg: &ChatMessage) {
     ui.add_space(4.0);
 }
 
-fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool, avatar_url: Option<&str>) {
+fn render_chat_message(
+    ui: &mut Ui,
+    msg: &ChatMessage,
+    show_header: bool,
+    avatar_url: Option<&str>,
+    local_username: &str,
+) -> Option<(String, String, bool)> {
     ui.add_space(if show_header { 10.0 } else { 1.0 });
 
     let author_color = theme::avatar_color(&msg.author);
+    let mut toggle = None;
 
     ui.horizontal_top(|ui| {
         ui.add_space(12.0);
@@ -128,7 +141,7 @@ fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool, avatar
                     );
                 });
             }
-            ui.add(
+            let content_resp = ui.add(
                 egui::Label::new(
                     RichText::new(&msg.content).size(14.0).color(theme::TEXT_PRIMARY),
                 )
@@ -137,10 +150,33 @@ fn render_chat_message(ui: &mut Ui, msg: &ChatMessage, show_header: bool, avatar
             if let Some(ref att) = msg.attachment {
                 render_attachment(ui, att);
             }
+
+            // ── Reactions ────────────────────────────────────────────────────
+            if !msg.reactions.is_empty() {
+                if let Some(t) = render_reactions(ui, msg, local_username) {
+                    toggle = Some(t);
+                }
+            }
+
+            // ── Right-click reaction picker ──────────────────────────────────
+            content_resp.context_menu(|ui| {
+                ui.horizontal(|ui| {
+                    for emoji in QUICK_EMOJIS {
+                        if ui.button(RichText::new(*emoji).size(18.0)).clicked() {
+                            if let Some(ref db_id) = msg.db_id {
+                                let already = msg.reactions.iter().any(|r| r.user == local_username && r.emoji == *emoji);
+                                toggle = Some((db_id.clone(), emoji.to_string(), !already));
+                            }
+                        }
+                    }
+                });
+            });
         });
 
         ui.add_space(12.0);
     });
+
+    toggle
 }
 
 fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
@@ -210,6 +246,36 @@ fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
                 });
         }
     }
+}
+
+const QUICK_EMOJIS: &[&str] = &["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+/// Render reaction pills below a message. Returns Some((db_id, emoji, active)) when a pill is clicked.
+fn render_reactions(ui: &mut Ui, msg: &ChatMessage, local_username: &str) -> Option<(String, String, bool)> {
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        // Group reactions by emoji, count distinct users.
+        let mut groups: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+        for r in &msg.reactions {
+            groups.entry(r.emoji.as_str()).or_default().push(r.user.as_str());
+        }
+        for (emoji, users) in &groups {
+            let count = users.len();
+            let reacted = users.iter().any(|u| *u == local_username);
+            let label = format!("{} {}", emoji, count);
+            let pill = egui::Button::new(RichText::new(&label).size(12.0))
+                .fill(if reacted { theme::ELEVATED_BG } else { Color32::TRANSPARENT })
+                .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
+                .corner_radius(CornerRadius::same(10u8));
+            if ui.add(pill).clicked() {
+                if let Some(ref db_id) = msg.db_id {
+                    clicked = Some((db_id.clone(), emoji.to_string(), !reacted));
+                }
+            }
+        }
+    });
+    clicked
 }
 
 fn open_externally(url: &str) {

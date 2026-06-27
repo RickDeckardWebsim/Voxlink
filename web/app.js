@@ -76,6 +76,9 @@ let silenceFrames = 0;
 let lastMsgAuthor = null;
 let authMode      = 'signin';
 let inspectedUser = null;
+const typingUsers = {};  // username → last-ping timestamp
+let lastTypingPing = 0;
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 // ── DOM shortcuts ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -86,6 +89,19 @@ async function init() {
   const { data: { session } } = await sb.auth.getSession();
   if (session) await enterChat(session);
   else showScreen('login-screen');
+
+  if (!$('typing-bar')) {
+    const bar = document.createElement('div');
+    bar.id = 'typing-bar';
+    bar.className = 'typing-bar';
+    const inputBar = $('input-wrap') || $('send-btn')?.closest('.input-wrap') || $('messages')?.nextElementSibling;
+    if (inputBar && inputBar.parentNode) {
+      inputBar.parentNode.insertBefore(bar, inputBar);
+    } else {
+      document.body.appendChild(bar);
+    }
+  }
+  setInterval(renderTypingBar, 1000);
 }
 
 function bindEvents() {
@@ -110,8 +126,14 @@ function bindEvents() {
   $('send-btn').addEventListener('click', trySend);
 
   const input = $('message-input');
-  const ph    = $('input-placeholder');
-  input.addEventListener('input', () => { ph.style.display = input.textContent.trim() ? 'none' : ''; });
+  input.addEventListener('input', () => {
+    ph.style.display = input.textContent.trim() ? 'none' : '';
+    const now = Date.now();
+    if (input.textContent.trim().length >= 2 && now - lastTypingPing > 3000) {
+      lastTypingPing = now;
+      bcast(EVENTS.TYPING, { from: myUsername, is_typing: true });
+    }
+  });
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trySend(); } });
 
   // Media attach
@@ -384,6 +406,8 @@ function connectSignaling() {
     .on('broadcast', { event: EVENTS.CHAT_MEDIA     }, ({ payload }) => onChatMedia(payload))
     .on('broadcast', { event: EVENTS.VOICE_STATE    }, ({ payload }) => onVoiceState(payload))
     .on('broadcast', { event: EVENTS.PROFILE_UPDATE }, ({ payload }) => onProfileUpdate(payload))
+    .on('broadcast', { event: EVENTS.TYPING         }, ({ payload }) => onTyping(payload))
+    .on('broadcast', { event: EVENTS.REACTION       }, ({ payload }) => onReaction(payload))
     .on('broadcast', { event: EVENTS.SDP_OFFER      }, ({ payload }) => onSdpOffer(payload))
     .on('broadcast', { event: EVENTS.SDP_ANSWER     }, ({ payload }) => onSdpAnswer(payload))
     .subscribe(async status => {
@@ -465,6 +489,124 @@ function onProfileUpdate({ from, new_username, avatar_url, description }) {
   renderMembers();
 }
 
+
+function onTyping({ from, is_typing }) {
+  if (!from || from === myUsername) return;
+  if (is_typing) {
+    typingUsers[from] = Date.now();
+  } else {
+    delete typingUsers[from];
+  }
+  renderTypingBar();
+}
+
+function renderTypingBar() {
+  const bar = $('typing-bar');
+  const now = Date.now();
+  for (const [u, ts] of Object.entries(typingUsers)) {
+    if (now - ts > 4000) delete typingUsers[u];
+  }
+  const users = Object.keys(typingUsers);
+  if (users.length === 0) {
+    if (bar) bar.textContent = '';
+    return;
+  }
+  const text = users.length === 1 ? `${users[0]} is typing…`
+             : users.length === 2 ? `${users[0]} and ${users[1]} are typing…`
+             : 'Several people are typing…';
+  if (bar) bar.textContent = text;
+}
+
+function onReaction({ from, message_id, emoji, active }) {
+  if (!from || from === myUsername || !message_id || !emoji) return;
+  const row = document.querySelector(`[data-msg-id="${CSS.escape(message_id)}"]`);
+  if (!row) return;
+  updateReactionPills(row, from, emoji, active);
+}
+
+function updateReactionPills(row, user, emoji, active) {
+  let pillsEl = row.querySelector('.msg-reactions');
+  if (!pillsEl) {
+    pillsEl = document.createElement('div');
+    pillsEl.className = 'msg-reactions';
+    row.appendChild(pillsEl);
+  }
+  let reactions = pillsEl._reactions ?? {};
+  const key = `${user}:${emoji}`;
+  if (active) {
+    reactions[key] = { user, emoji };
+  } else {
+    delete reactions[key];
+  }
+  pillsEl._reactions = reactions;
+
+  const groups = {};
+  for (const { user: u, emoji: e } of Object.values(reactions)) {
+    groups[e] = groups[e] || new Set();
+    groups[e].add(u);
+  }
+
+  pillsEl.innerHTML = '';
+  for (const [e, users] of Object.entries(groups)) {
+    const pill = document.createElement('span');
+    pill.className = 'reaction-pill';
+    pill.textContent = `${e} ${users.size}`;
+    if (users.has(myUsername)) pill.classList.add('reacted');
+    pill.onclick = () => {
+      const active = !users.has(myUsername);
+      toggleReaction(row.dataset.msgId, e, active);
+    };
+    pillsEl.appendChild(pill);
+  }
+}
+
+async function toggleReaction(messageId, emoji, active) {
+  const row = document.querySelector(`[data-msg-id="${CSS.escape(messageId)}"]`);
+  if (row) updateReactionPills(row, myUsername, emoji, active);
+  bcast(EVENTS.REACTION, { from: myUsername, message_id: messageId, emoji, active });
+  if (active) {
+    const { error } = await sb.from('reactions').insert({ message_id: messageId, user: myUsername, emoji });
+    if (error) console.warn('Reaction insert failed:', error.message);
+  } else {
+    const { error } = await sb.from('reactions')
+      .delete()
+      .eq('message_id', messageId).eq('user', myUsername).eq('emoji', emoji);
+    if (error) console.warn('Reaction delete failed:', error.message);
+  }
+}
+
+function showReactionPicker(x, y, messageId, targetEl) {
+  let picker = $('reaction-picker');
+  if (!picker) {
+    picker = document.createElement('div');
+    picker.id = 'reaction-picker';
+    picker.className = 'reaction-picker';
+    document.body.appendChild(picker);
+  }
+  picker.style.left = `${x}px`;
+  picker.style.top  = `${y}px`;
+  picker.style.display = 'flex';
+  picker.innerHTML = '';
+  for (const emoji of QUICK_EMOJIS) {
+    const btn = document.createElement('span');
+    btn.className = 'picker-emoji';
+    btn.textContent = emoji;
+    btn.onclick = () => {
+      const pillsEl = targetEl.closest('[data-msg-id]')?.querySelector('.msg-reactions');
+      const reactions = pillsEl?._reactions ?? {};
+      const already = Object.values(reactions).some(r => r.user === myUsername && r.emoji === emoji);
+      toggleReaction(messageId, emoji, !already);
+      picker.style.display = 'none';
+    };
+    picker.appendChild(btn);
+  }
+  setTimeout(() => {
+    document.addEventListener('click', function close() {
+      picker.style.display = 'none';
+      document.removeEventListener('click', close);
+    }, { once: true });
+  }, 0);
+}
 // ── WebRTC ────────────────────────────────────────────────────────────────────
 async function getOrCreatePc(username) {
   if (peerConns[username]) return peerConns[username];
@@ -605,12 +747,10 @@ function startSpeakingDetection() {
     }
   }, 100);
 }
-
-// ── Messages ──────────────────────────────────────────────────────────────────
 async function fetchHistory() {
   const { data } = await sb
     .from('messages')
-    .select('from_user, content, attachment_url, attachment_kind, attachment_filename, created_at')
+    .select('id, from_user, content, attachment_url, attachment_kind, attachment_filename, created_at')
     .eq('channel', DEFAULT_DB_CHANNEL)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -624,8 +764,20 @@ async function fetchHistory() {
     const att = row.attachment_url
       ? { url: row.attachment_url, kind: row.attachment_kind || 'image', filename: row.attachment_filename || 'attachment' }
       : null;
-    appendMsg(row.from_user, row.content || '', new Date(row.created_at), false, att);
+    appendMsg(row.from_user, row.content || '', new Date(row.created_at), false, att, row.id);
   }
+
+  const ids = data.map(r => r.id).filter(Boolean);
+  if (ids.length) {
+    const { data: rxn } = await sb.from('reactions').select('message_id,user,emoji').in('message_id', ids);
+    if (rxn) {
+      for (const r of rxn) {
+        const row = document.querySelector(`[data-msg-id="${CSS.escape(r.message_id)}"]`);
+        if (row) updateReactionPills(row, r.user, r.emoji, true);
+      }
+    }
+  }
+
   scrollBottom();
 }
 
@@ -635,6 +787,7 @@ async function trySend() {
   if (!content) return;
   input.textContent = '';
   $('input-placeholder').style.display = '';
+  bcast(EVENTS.TYPING, { from: myUsername, is_typing: false });
 
   bcast(EVENTS.CHAT_MESSAGE, { from: myUsername, content });
   appendMsg(myUsername, content);
@@ -676,7 +829,7 @@ async function uploadMedia(file) {
 
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
-function appendMsg(from, content, ts = new Date(), scroll = true, attachment = null) {
+function appendMsg(from, content, ts = new Date(), scroll = true, attachment = null, dbId = null) {
   const container  = $('messages');
   const showHeader = from !== lastMsgAuthor;
   lastMsgAuthor    = from;
@@ -694,6 +847,7 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
 
   if (showHeader) {
     const group = document.createElement('div');
+    if (dbId) group.dataset.msgId = dbId;
     group.className = 'msg-group';
 
     const isOwn = from === myUsername;
@@ -740,6 +894,12 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     target.appendChild(wrap);
   }
 
+  if (dbId && target) {
+    target.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      showReactionPicker(e.clientX, e.clientY, dbId, target);
+    });
+  }
   if (scroll) scrollBottom();
 }
 

@@ -11,6 +11,8 @@ use super::{components, theme, updater as update_ui};
 #[allow(deprecated)] // egui 0.34: Panel::show still works, show_inside() is new preferred API
 pub fn render(ctx: &egui::Context, state: &mut AppState) {
     poll_media_upload(ctx, state);
+    // Clear typing entries for peers who've left.
+    state.typing_users.retain(|u| state.peers.iter().any(|p| &p.username == u));
     // ── 1. Left sidebar panel ─────────────────────────────────────────────────
     let sidebar_fill = state.theme_override.sidebar_bg.map(ThemeOverride::c32).unwrap_or(theme::SIDEBAR_BG);
     egui::SidePanel::left("sidebar")
@@ -38,6 +40,22 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
         .show(ctx, |ui| {
             render_channel_header(ui, state);
         });
+
+    // ── Typing indicator (above input bar) ────────────────────────────────────
+    if !state.typing_users.is_empty() {
+        egui::TopBottomPanel::bottom("typing_bar")
+            .resizable(false)
+            .exact_size(22.0)
+            .frame(Frame::default().fill(chat_fill).inner_margin(Margin { left: 16, right: 16, top: 2, bottom: 0 }))
+            .show(ctx, |ui| {
+                let text = match state.typing_users.len() {
+                    1 => format!("{} is typing…", state.typing_users[0]),
+                    2 => format!("{} and {} are typing…", state.typing_users[0], state.typing_users[1]),
+                    _ => "Several people are typing…".to_string(),
+                };
+                ui.label(RichText::new(text).size(12.0).color(theme::TEXT_MUTED));
+            });
+    }
 
     // ── 3. Input bar (BOTTOM) — anchored to the window bottom edge ────────────
     egui::TopBottomPanel::bottom("input_bar")
@@ -492,7 +510,40 @@ fn render_message_area(_ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppS
                     && !is_system;
 
                 let avatar_url = avatar_map.get(msg.author.as_str()).map(String::as_str);
-                components::render_message(ui, msg, !same_author, avatar_url);
+                let reaction_toggle = components::render_message(ui, msg, !same_author, avatar_url, &state.username);
+
+                if let Some((message_id, emoji, active)) = reaction_toggle {
+                    // Optimistic local update
+                    if let Some(m) = state.messages.iter_mut().find(|m| m.db_id.as_deref() == Some(&message_id)) {
+                        if active {
+                            if !m.reactions.iter().any(|r| r.user == state.username && r.emoji == emoji) {
+                                m.reactions.push(crate::state::Reaction { user: state.username.clone(), emoji: emoji.clone() });
+                            }
+                        } else {
+                            m.reactions.retain(|r| !(r.user == state.username && r.emoji == emoji));
+                        }
+                    }
+                    // Broadcast
+                    if let Some(tx) = &state.cmd_tx {
+                        let _ = tx.send(crate::state::UiCommand::SendReaction {
+                            message_id: message_id.clone(),
+                            emoji: emoji.clone(),
+                            active,
+                        });
+                    }
+                    // DB persist (fire-and-forget)
+                    if let Some(ref s) = state.session {
+                        let at = s.access_token.clone();
+                        let user = state.username.clone();
+                        thread::spawn(move || {
+                            if active {
+                                let _ = crate::net::supabase::insert_reaction(&at, &message_id, &user, &emoji);
+                            } else {
+                                let _ = crate::net::supabase::delete_reaction(&at, &message_id, &user, &emoji);
+                            }
+                        });
+                    }
+                }
 
                 prev_author = Some(msg.author.as_str());
                 prev_kind   = Some(&msg.kind);
@@ -563,6 +614,16 @@ fn render_input_bar(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState
                     if response.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) {
                         try_send_message(state);
                         ctx.memory_mut(|m| m.request_focus(input_id));
+                    }
+                    // Typing indicator: send a ping on keystroke if throttled (1 / 3s).
+                    if response.changed() && !state.message_input.trim().is_empty() {
+                        let now = std::time::Instant::now();
+                        if now.duration_since(state.last_typing_ping) > std::time::Duration::from_secs(3) {
+                            state.last_typing_ping = now;
+                            if let Some(tx) = &state.cmd_tx {
+                                let _ = tx.send(crate::state::UiCommand::SendTyping(true));
+                            }
+                        }
                     }
                 });
             });
@@ -685,6 +746,10 @@ fn try_send_message(state: &mut AppState) {
     let content = state.message_input.trim().to_string();
     if content.is_empty() { return; }
     state.message_input.clear();
+    // Clear typing indicator for all peers.
+    if let Some(tx) = &state.cmd_tx {
+        let _ = tx.send(crate::state::UiCommand::SendTyping(false));
+    }
 
     if let Some(tx) = &state.cmd_tx {
         let _ = tx.send(crate::state::UiCommand::SendMessage(content.clone()));

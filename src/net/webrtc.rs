@@ -363,6 +363,14 @@ pub async fn run(
                             ctx.request_repaint();
                             log::info!("[webrtc] Muted: {}", muted);
                         }
+                        UiCommand::SendTyping(is_typing) => {
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastTyping { is_typing });
+                        }
+                        UiCommand::SendReaction { message_id, emoji, active } => {
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastReaction {
+                                message_id, emoji, active,
+                            });
+                        }
                         _ => {}
                     }
                 } else {
