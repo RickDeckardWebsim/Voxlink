@@ -1,0 +1,16 @@
+{
+  "planPath": "docs/plans/2026-06-27-social-layer-phase1-implementation.md",
+  "tasks": [
+    { "id": 1,  "subject": "Task 1: Add typing + reaction event constants to contract", "status": "pending", "blockedBy": [] },
+    { "id": 2,  "subject": "Task 2: Add Reaction type, extend ChatMessage, add NetEvent/UiCommand variants, add AppState.typing_users", "status": "pending", "blockedBy": [] },
+    { "id": 3,  "subject": "Task 3: Add SigCmd variants + send/recv handlers in signaling.rs", "status": "pending", "blockedBy": [1, 2] },
+    { "id": 4,  "subject": "Task 4: Route SendTyping + SendReaction UiCommands through webrtc.rs", "status": "pending", "blockedBy": [2, 3] },
+    { "id": 5,  "subject": "Task 5: Add reaction persistence functions in supabase.rs", "status": "pending", "blockedBy": [2] },
+    { "id": 6,  "subject": "Task 6: Add db_id to ChatMessage, wire NetEvent handlers, hydrate reactions on connect", "status": "pending", "blockedBy": [2, 5] },
+    { "id": 7,  "subject": "Task 7: Add typing indicator bar + typing send logic in chat.rs", "status": "pending", "blockedBy": [2, 4] },
+    { "id": 8,  "subject": "Task 8: Add reaction rendering + picker in components.rs", "status": "pending", "blockedBy": [2, 6] },
+    { "id": 9,  "subject": "Task 9: Web client — typing + reactions in web/app.js", "status": "pending", "blockedBy": [1] },
+    { "id": 10, "subject": "Task 10: Run SQL migration + integration smoke test", "status": "pending", "blockedBy": [4, 6, 7, 8, 9] }
+  ],
+  "lastUpdated": "2026-06-27T00:00:00Z"
+}
