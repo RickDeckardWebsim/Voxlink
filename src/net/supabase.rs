@@ -3,8 +3,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-const BASE_URL: &str = "https://syftqwloslmnjyvppler.supabase.co";
-const ANON_KEY: &str = "sb_publishable_VK3kO0lX4tTsrHlCsH6JFQ_ebB6_lMH";
+use crate::net::contract;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthResponse {
@@ -33,10 +32,10 @@ pub struct Profile {
 /// expire after 1 hour by default.
 pub fn refresh_session(refresh_token: &str) -> Result<(String, String)> {
     let client = Client::new();
-    let url = format!("{}/auth/v1/token?grant_type=refresh_token", BASE_URL);
+    let url = format!("{}/auth/v1/token?grant_type=refresh_token", contract::SUPABASE_URL);
 
     let res = client.post(&url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Content-Type", "application/json")
         .json(&json!({ "refresh_token": refresh_token }))
         .send()?;
@@ -58,11 +57,11 @@ pub fn refresh_session(refresh_token: &str) -> Result<(String, String)> {
 
 pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthResponse> {
     let client = Client::new();
-    let url = format!("{}/auth/v1/signup?apikey={}", BASE_URL, ANON_KEY);
+    let url = format!("{}/auth/v1/signup?apikey={}", contract::SUPABASE_URL, contract::SUPABASE_ANON_KEY);
     
     // 1. Sign up user
     let res = client.post(&url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Content-Type", "application/json")
         .json(&json!({
             "email": email,
@@ -115,9 +114,9 @@ pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthRespon
     }
     
     // 2. Insert into profiles table
-    let profiles_url = format!("{}/rest/v1/profiles", BASE_URL);
+    let profiles_url = format!("{}/rest/v1/profiles", contract::SUPABASE_URL);
     client.post(&profiles_url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
         .header("Prefer", "return=minimal")
@@ -133,10 +132,10 @@ pub fn sign_up(email: &str, password: &str, username: &str) -> Result<AuthRespon
 
 pub fn sign_in(email: &str, password: &str) -> Result<AuthResponse> {
     let client = Client::new();
-    let url = format!("{}/auth/v1/token?grant_type=password&apikey={}", BASE_URL, ANON_KEY);
+    let url = format!("{}/auth/v1/token?grant_type=password&apikey={}", contract::SUPABASE_URL, contract::SUPABASE_ANON_KEY);
     
     let res = client.post(&url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Content-Type", "application/json")
         .json(&json!({
             "email": email,
@@ -155,10 +154,10 @@ pub fn sign_in(email: &str, password: &str) -> Result<AuthResponse> {
 
 pub fn get_profile(user_id: &str, access_token: &str) -> Result<Profile> {
     let client = Client::new();
-    let url = format!("{}/rest/v1/profiles?id=eq.{}&select=*", BASE_URL, user_id);
+    let url = format!("{}/rest/v1/profiles?id=eq.{}&select=*", contract::SUPABASE_URL, user_id);
     
     let res = client.get(&url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?
         .error_for_status()?;
@@ -169,7 +168,7 @@ pub fn get_profile(user_id: &str, access_token: &str) -> Result<Profile> {
 
 pub fn update_profile(user_id: &str, access_token: &str, username: &str, avatar_url: Option<&str>, description: &str) -> Result<()> {
     let client = Client::new();
-    let url = format!("{}/rest/v1/profiles?id=eq.{}&apikey={}", BASE_URL, user_id, ANON_KEY);
+    let url = format!("{}/rest/v1/profiles?id=eq.{}&apikey={}", contract::SUPABASE_URL, user_id, contract::SUPABASE_ANON_KEY);
 
     let mut body = json!({
         "username": username,
@@ -181,7 +180,7 @@ pub fn update_profile(user_id: &str, access_token: &str, username: &str, avatar_
     }
 
     client.patch(&url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
         .header("Prefer", "return=minimal")
@@ -228,19 +227,13 @@ fn is_auth_error(msg: &str) -> bool {
 pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &str) -> Result<String> {
     let client = Client::new();
     let filename = format!("{}_avatar.{}", user_id, ext);
-    let obj_url  = format!("{}/storage/v1/object/avatars/{}", BASE_URL, filename);
+    let obj_url  = format!("{}/storage/v1/object/avatars/{}", contract::SUPABASE_URL, filename);
 
-    let content_type = match ext.to_lowercase().as_str() {
-        "png"          => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif"          => "image/gif",
-        "webp"         => "image/webp",
-        _              => "application/octet-stream",
-    };
+    let content_type = contract::mime_for_ext(ext);
 
     // PUT = standard upsert verb for Supabase Storage.
     let res = client.put(&obj_url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", content_type)
         .header("x-upsert", "true")
@@ -250,7 +243,7 @@ pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &st
     if !res.status().is_success() {
         // Older Supabase Storage versions: fall back to POST with x-upsert.
         let res2 = client.post(&obj_url)
-            .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Content-Type", content_type)
             .header("x-upsert", "true")
@@ -268,7 +261,7 @@ pub fn upload_avatar(user_id: &str, access_token: &str, bytes: Vec<u8>, ext: &st
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    Ok(format!("{}/storage/v1/object/public/avatars/{}?t={}", BASE_URL, filename, ts))
+    Ok(format!("{}/storage/v1/object/public/avatars/{}?t={}", contract::SUPABASE_URL, filename, ts))
 }
 
 /// Upload a chat media attachment. Files are stored under `avatars/chat/{user_id}/` so only
@@ -291,12 +284,12 @@ pub fn upload_media(
         .take(40)
         .collect();
     let path    = format!("chat/{}/{}-{}", user_id, ts, safe_name);
-    let obj_url = format!("{}/storage/v1/object/avatars/{}", BASE_URL, path);
+    let obj_url = format!("{}/storage/v1/object/avatars/{}", contract::SUPABASE_URL, path);
 
     let res = client.post(&obj_url)
-        .header("apikey", ANON_KEY)
+        .header("apikey", contract::SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
-        .header("Content-Type", mime_for_ext(ext))
+        .header("Content-Type", contract::mime_for_ext(ext))
         .body(bytes)
         .send()?;
 
@@ -305,7 +298,7 @@ pub fn upload_media(
         return Err(anyhow::anyhow!("{}", parse_supabase_error(&body)));
     }
 
-    Ok(format!("{}/storage/v1/object/public/avatars/{}", BASE_URL, path))
+    Ok(format!("{}/storage/v1/object/public/avatars/{}", contract::SUPABASE_URL, path))
 }
 
 /// Upload avatar with automatic JWT refresh on auth failure.
@@ -390,27 +383,23 @@ pub fn insert_message(
     attachment: Option<&crate::state::Attachment>,
 ) -> Result<()> {
     let client  = Client::new();
-    let url     = format!("{}/rest/v1/messages", BASE_URL);
+    let url     = format!("{}/rest/v1/messages", contract::SUPABASE_URL);
 
     let mut body = json!({
-        "channel":   "general",
+        "channel":   contract::DEFAULT_DB_CHANNEL,
         "from_user": from_user,
         "content":   content,
     });
 
     if let Some(att) = attachment {
-        let kind_str = match att.kind {
-            crate::state::AttachmentKind::Image => "image",
-            crate::state::AttachmentKind::Audio => "audio",
-            crate::state::AttachmentKind::Video => "video",
-        };
+        let kind_str = att.kind.as_str();
         body["attachment_url"]      = json!(att.url);
         body["attachment_kind"]     = json!(kind_str);
         body["attachment_filename"] = json!(att.filename);
     }
 
     let res = client.post(&url)
-        .header("apikey",         ANON_KEY)
+        .header("apikey",         contract::SUPABASE_ANON_KEY)
         .header("Authorization",  format!("Bearer {}", access_token))
         .header("Content-Type",   "application/json")
         .header("Prefer",         "return=minimal")
@@ -432,12 +421,13 @@ pub fn fetch_recent_messages(
 ) -> Result<Vec<crate::state::ChatMessage>> {
     let client = Client::new();
     let url = format!(
-        "{}/rest/v1/messages?channel=eq.general&order=created_at.desc&limit=100",
-        BASE_URL
+        "{}/rest/v1/messages?channel=eq.{}&order=created_at.desc&limit=100",
+        contract::SUPABASE_URL,
+        contract::DEFAULT_DB_CHANNEL
     );
 
     let res = client.get(&url)
-        .header("apikey",        ANON_KEY)
+        .header("apikey",        contract::SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", access_token))
         .send()?;
 
@@ -459,11 +449,7 @@ pub fn fetch_recent_messages(
 
         let attachment = match (row.attachment_url, row.attachment_kind, row.attachment_filename) {
             (Some(url), Some(kind_str), Some(filename)) => {
-                let att_kind = match kind_str.as_str() {
-                    "audio" => crate::state::AttachmentKind::Audio,
-                    "video" => crate::state::AttachmentKind::Video,
-                    _       => crate::state::AttachmentKind::Image,
-                };
+                let att_kind = crate::state::AttachmentKind::from_str(&kind_str);
                 Some(crate::state::Attachment { url, kind: att_kind, filename })
             }
             _ => None,
@@ -494,18 +480,3 @@ fn iso_to_hhmm(iso: &str) -> String {
     "??:??".to_string()
 }
 
-fn mime_for_ext(ext: &str) -> &'static str {
-    match ext.to_lowercase().as_str() {
-        "png"          => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif"          => "image/gif",
-        "webp"         => "image/webp",
-        "mp3"          => "audio/mpeg",
-        "ogg"          => "audio/ogg",
-        "wav"          => "audio/wav",
-        "mp4"          => "video/mp4",
-        "webm"         => "video/webm",
-        "mov"          => "video/quicktime",
-        _              => "application/octet-stream",
-    }
-}

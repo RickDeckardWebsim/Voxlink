@@ -95,6 +95,25 @@ pub enum AttachmentKind {
     Audio,
     Video,
 }
+impl AttachmentKind {
+    /// Canonical lowercase wire/DB string (contract spec §5).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Audio => "audio",
+            Self::Video => "video",
+        }
+    }
+
+    /// Parse the wire/DB string back into a variant. Unknown → Image.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "audio" => Self::Audio,
+            "video" => Self::Video,
+            _ => Self::Image,
+        }
+    }
+}
 
 /// A file attached to a chat message, stored in Supabase Storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]

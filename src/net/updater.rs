@@ -5,8 +5,15 @@ use std::thread;
 
 const REPO_OWNER: &str = "RickDeckardWebsim";
 const REPO_NAME:  &str = "Voxlink";
+#[cfg(target_os = "windows")]
 const ASSET_NAME: &str = "voxlink-windows.zip";
+#[cfg(target_os = "windows")]
 const EXE_NAME:   &str = "voxlink.exe";
+
+#[cfg(target_os = "linux")]
+const ASSET_NAME: &str = "voxlink-linux.zip";
+#[cfg(target_os = "linux")]
+const EXE_NAME:   &str = "voxlink";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -175,7 +182,8 @@ fn extract_exe(zip_path: &Path) -> Result<PathBuf, String> {
         buf
     };
 
-    let out_path = std::env::temp_dir().join("voxlink_staged.exe");
+    let out_name = if cfg!(target_os = "windows") { "voxlink_staged.exe" } else { "voxlink_staged" };
+    let out_path = std::env::temp_dir().join(out_name);
     std::fs::write(&out_path, &bytes).map_err(|e| e.to_string())?;
     Ok(out_path)
 }

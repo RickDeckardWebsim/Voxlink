@@ -654,7 +654,7 @@ fn pick_and_upload_media(state: &mut AppState, ctx: &egui::Context) {
     thread::spawn(move || {
         let ext      = path.extension().and_then(|e| e.to_str()).unwrap_or("bin").to_string();
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("attachment").to_string();
-        let kind     = kind_for_ext(&ext);
+        let kind     = crate::net::contract::ext_to_kind(&ext);
 
         let result = std::fs::read(&path)
             .map_err(|e| format!("Could not read file: {}", e))
@@ -678,13 +678,6 @@ fn pick_and_upload_media(state: &mut AppState, ctx: &egui::Context) {
     });
 }
 
-fn kind_for_ext(ext: &str) -> crate::state::AttachmentKind {
-    match ext.to_lowercase().as_str() {
-        "mp3" | "ogg" | "wav" | "flac" | "aac" => crate::state::AttachmentKind::Audio,
-        "mp4" | "webm" | "mov" | "avi" | "mkv" => crate::state::AttachmentKind::Video,
-        _                                       => crate::state::AttachmentKind::Image,
-    }
-}
 
 // ── Message send ──────────────────────────────────────────────────────────────
 
