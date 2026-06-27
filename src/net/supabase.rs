@@ -477,10 +477,10 @@ pub fn fetch_recent_messages(
 //
 //   CREATE TABLE IF NOT EXISTS reactions (
 //     message_id  UUID        NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-//     user        TEXT        NOT NULL,
+//     username    TEXT        NOT NULL,            -- NOT "user" (Postgres reserved word)
 //     emoji       TEXT        NOT NULL,
 //     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-//     PRIMARY KEY (message_id, user, emoji)
+//     PRIMARY KEY (message_id, username, emoji)
 //   );
 //   ALTER TABLE reactions ENABLE ROW LEVEL SECURITY;
 //   CREATE POLICY rx_read   ON reactions FOR SELECT USING (true);
@@ -493,8 +493,7 @@ pub fn insert_reaction(access_token: &str, message_id: &str, user: &str, emoji: 
     let url = format!("{}/rest/v1/reactions", contract::SUPABASE_URL);
     let body = json!({
         "message_id": message_id,
-        "user":       user,
-        "emoji":      emoji,
+        "username":   user,
     });
     let res = client.post(&url)
         .header("apikey",         contract::SUPABASE_ANON_KEY)
@@ -514,7 +513,7 @@ pub fn insert_reaction(access_token: &str, message_id: &str, user: &str, emoji: 
 pub fn delete_reaction(access_token: &str, message_id: &str, user: &str, emoji: &str) -> Result<()> {
     let client = Client::new();
     let url = format!(
-        "{}/rest/v1/reactions?message_id=eq.{}&user=eq.{}&emoji=eq.{}",
+        "{}/rest/v1/reactions?message_id=eq.{}&username=eq.{}&emoji=eq.{}",
         contract::SUPABASE_URL, message_id, user, emoji
     );
     let res = client.delete(&url)
@@ -536,7 +535,7 @@ pub fn fetch_reactions(
     let client = Client::new();
     let ids_csv = message_ids.join(",");
     let url = format!(
-        "{}/rest/v1/reactions?select=message_id,user,emoji&message_id=in.({})",
+        "{}/rest/v1/reactions?select=message_id,username,emoji&message_id=in.({})",
         contract::SUPABASE_URL, ids_csv
     );
 
@@ -552,15 +551,14 @@ pub fn fetch_reactions(
     #[derive(Deserialize)]
     struct DbReaction {
         message_id: String,
-        user:       String,
+        username:   String,
         emoji:      String,
     }
-
     let rows: Vec<DbReaction> = res.json()?;
     let mut map: std::collections::HashMap<String, Vec<crate::state::Reaction>> = std::collections::HashMap::new();
     for row in rows {
         map.entry(row.message_id).or_default().push(crate::state::Reaction {
-            user:  row.user,
+            user:  row.username,
             emoji: row.emoji,
         });
     }

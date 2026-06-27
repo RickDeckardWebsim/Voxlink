@@ -565,12 +565,12 @@ async function toggleReaction(messageId, emoji, active) {
   if (row) updateReactionPills(row, myUsername, emoji, active);
   bcast(EVENTS.REACTION, { from: myUsername, message_id: messageId, emoji, active });
   if (active) {
-    const { error } = await sb.from('reactions').insert({ message_id: messageId, user: myUsername, emoji });
+    const { error } = await sb.from('reactions').insert({ message_id: messageId, username: myUsername, emoji });
     if (error) console.warn('Reaction insert failed:', error.message);
   } else {
     const { error } = await sb.from('reactions')
       .delete()
-      .eq('message_id', messageId).eq('user', myUsername).eq('emoji', emoji);
+      .eq('message_id', messageId).eq('username', myUsername).eq('emoji', emoji);
     if (error) console.warn('Reaction delete failed:', error.message);
   }
 }
@@ -769,11 +769,11 @@ async function fetchHistory() {
 
   const ids = data.map(r => r.id).filter(Boolean);
   if (ids.length) {
-    const { data: rxn } = await sb.from('reactions').select('message_id,user,emoji').in('message_id', ids);
+    const { data: rxn } = await sb.from('reactions').select('message_id,username,emoji').in('message_id', ids);
     if (rxn) {
       for (const r of rxn) {
         const row = document.querySelector(`[data-msg-id="${CSS.escape(r.message_id)}"]`);
-        if (row) updateReactionPills(row, r.user, r.emoji, true);
+        if (row) updateReactionPills(row, r.username, r.emoji, true);
       }
     }
   }
