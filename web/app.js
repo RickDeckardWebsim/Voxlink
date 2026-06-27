@@ -3,10 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, SIGNALING_CHANNEL, DEFAULT_DB_CHANNEL, EVENTS, mimeToKind } from './contract.js';
 
-const SUPABASE_URL      = 'https://syftqwloslmnjyvppler.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_VK3kO0lX4tTsrHlCsH6JFQ_ebB6_lMH';
-const CHANNEL_NAME      = 'p2p-signaling';
 const SPEAKING_THRESHOLD  = 0.01;
 const SILENCE_HOLD_FRAMES = 8;   // × 100 ms = 800 ms
 
@@ -165,6 +163,17 @@ function bindEvents() {
     if (e.target.closest('.member-row')) return;
     closeInspectPanel();
   });
+
+  // Announce departure when the tab/window closes. navigator.sendBeacon is
+  // not usable for Realtime broadcasts (it needs the SDK channel), so we fire
+  // a best-effort async broadcast; the browser may not wait for it to finish,
+  // but Supabase presence timeout is the fallback.
+  window.addEventListener('beforeunload', () => {
+    if (sigChannel && myUsername) {
+      try { bcast(EVENTS.PEER_LEAVE, { from: myUsername }); }
+      catch (_) {}
+    }
+  });
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -233,6 +242,12 @@ async function loadProfile() {
 
 async function cleanup() {
   if (inVoice) await leaveVoice();
+  // Announce departure so peers update their sidebars without waiting for
+  // Realtime presence timeout. Best-effort: a dying socket may reject the send.
+  if (sigChannel && myUsername) {
+    try { await bcast(EVENTS.PEER_LEAVE, { from: myUsername }); }
+    catch (_) { /* socket already closing — presence timeout will catch it */ }
+  }
   if (sigChannel) { sigChannel.unsubscribe(); sigChannel = null; }
   for (const pc of Object.values(peerConns)) pc.close();
   Object.keys(peerConns).forEach(k => delete peerConns[k]);
@@ -328,7 +343,7 @@ async function saveProfile() {
   renderProfileBar();
   renderMembers();
 
-  await bcast('profile_update', {
+  await bcast(EVENTS.PROFILE_UPDATE, {
     from: oldUsername, new_username: myUsername,
     avatar_url: myAvatarUrl, description: myDescription,
   });
@@ -360,21 +375,21 @@ async function uploadProfileAvatar(file) {
 
 // ── Signaling ─────────────────────────────────────────────────────────────────
 function connectSignaling() {
-  sigChannel = sb.channel(CHANNEL_NAME, { config: { broadcast: { self: false } } });
+  sigChannel = sb.channel(SIGNALING_CHANNEL, { config: { broadcast: { self: false } } });
 
   sigChannel
-    .on('broadcast', { event: 'peer_join'      }, ({ payload }) => onPeerJoin(payload))
-    .on('broadcast', { event: 'peer_leave'     }, ({ payload }) => onPeerLeave(payload))
-    .on('broadcast', { event: 'chat_message'   }, ({ payload }) => onChatMessage(payload))
-    .on('broadcast', { event: 'chat_media'     }, ({ payload }) => onChatMedia(payload))
-    .on('broadcast', { event: 'voice_state'    }, ({ payload }) => onVoiceState(payload))
-    .on('broadcast', { event: 'profile_update' }, ({ payload }) => onProfileUpdate(payload))
-    .on('broadcast', { event: 'sdp_offer'      }, ({ payload }) => onSdpOffer(payload))
-    .on('broadcast', { event: 'sdp_answer'     }, ({ payload }) => onSdpAnswer(payload))
+    .on('broadcast', { event: EVENTS.PEER_JOIN      }, ({ payload }) => onPeerJoin(payload))
+    .on('broadcast', { event: EVENTS.PEER_LEAVE     }, ({ payload }) => onPeerLeave(payload))
+    .on('broadcast', { event: EVENTS.CHAT_MESSAGE   }, ({ payload }) => onChatMessage(payload))
+    .on('broadcast', { event: EVENTS.CHAT_MEDIA     }, ({ payload }) => onChatMedia(payload))
+    .on('broadcast', { event: EVENTS.VOICE_STATE    }, ({ payload }) => onVoiceState(payload))
+    .on('broadcast', { event: EVENTS.PROFILE_UPDATE }, ({ payload }) => onProfileUpdate(payload))
+    .on('broadcast', { event: EVENTS.SDP_OFFER      }, ({ payload }) => onSdpOffer(payload))
+    .on('broadcast', { event: EVENTS.SDP_ANSWER     }, ({ payload }) => onSdpAnswer(payload))
     .subscribe(async status => {
       if (status !== 'SUBSCRIBED') return;
       sysMsg('Connected to VoxLink. Waiting for peers…');
-      await bcast('peer_join', { from: myUsername, avatar_url: myAvatarUrl, description: myDescription });
+      await bcast(EVENTS.PEER_JOIN, { from: myUsername, avatar_url: myAvatarUrl, description: myDescription });
       await fetchHistory();
     });
 }
@@ -400,7 +415,7 @@ async function onPeerJoin({ from, avatar_url, description }) {
 
   if (!respondedTo.has(from)) {
     respondedTo.add(from);
-    await bcast('peer_join', { from: myUsername, avatar_url: myAvatarUrl, description: myDescription });
+    await bcast(EVENTS.PEER_JOIN, { from: myUsername, avatar_url: myAvatarUrl, description: myDescription });
     if (myUsername < from && inVoice) await initiateCall(from);
   }
 
@@ -485,7 +500,7 @@ async function initiateCall(username) {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   await waitIce(pc);
-  await bcast('sdp_offer', { from: myUsername, to: username, sdp: pc.localDescription.sdp });
+  await bcast(EVENTS.SDP_OFFER, { from: myUsername, to: username, sdp: pc.localDescription.sdp });
 }
 
 async function onSdpOffer({ from, to, sdp }) {
@@ -495,7 +510,7 @@ async function onSdpOffer({ from, to, sdp }) {
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
   await waitIce(pc);
-  await bcast('sdp_answer', { from: myUsername, to: from, sdp: pc.localDescription.sdp });
+  await bcast(EVENTS.SDP_ANSWER, { from: myUsername, to: from, sdp: pc.localDescription.sdp });
 }
 
 async function onSdpAnswer({ from, to, sdp }) {
@@ -540,7 +555,7 @@ async function joinVoice() {
   }
 
   startSpeakingDetection();
-  await bcast('voice_state', { from: myUsername, speaking: false, muted: isMuted, in_voice: true });
+  await bcast(EVENTS.VOICE_STATE, { from: myUsername, speaking: false, muted: isMuted, in_voice: true });
   renderVoiceUI();
 }
 
@@ -549,7 +564,7 @@ async function leaveVoice() {
   if (speakingTimer) { clearInterval(speakingTimer); speakingTimer = null; }
   if (audioCtx)      { audioCtx.close();             audioCtx      = null; }
   if (localStream)   { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-  await bcast('voice_state', { from: myUsername, speaking: false, muted: isMuted, in_voice: false });
+  await bcast(EVENTS.VOICE_STATE, { from: myUsername, speaking: false, muted: isMuted, in_voice: false });
   renderVoiceUI();
 }
 
@@ -557,7 +572,7 @@ function toggleMute() {
   if (!localStream) return;
   isMuted = !isMuted;
   localStream.getAudioTracks().forEach(t => { t.enabled = !isMuted; });
-  bcast('voice_state', { from: myUsername, speaking: amSpeaking && !isMuted, muted: isMuted, in_voice: true });
+  bcast(EVENTS.VOICE_STATE, { from: myUsername, speaking: amSpeaking && !isMuted, muted: isMuted, in_voice: true });
   renderVoiceUI();
 }
 
@@ -577,14 +592,14 @@ function startSpeakingDetection() {
       silenceFrames = 0;
       if (!amSpeaking && !isMuted) {
         amSpeaking = true;
-        bcast('voice_state', { from: myUsername, speaking: true, muted: false, in_voice: true });
+        bcast(EVENTS.VOICE_STATE, { from: myUsername, speaking: true, muted: false, in_voice: true });
         renderVoiceParticipants();
       }
     } else {
       silenceFrames++;
       if (amSpeaking && silenceFrames >= SILENCE_HOLD_FRAMES) {
         amSpeaking = false;
-        bcast('voice_state', { from: myUsername, speaking: false, muted: isMuted, in_voice: true });
+        bcast(EVENTS.VOICE_STATE, { from: myUsername, speaking: false, muted: isMuted, in_voice: true });
         renderVoiceParticipants();
       }
     }
@@ -596,7 +611,7 @@ async function fetchHistory() {
   const { data } = await sb
     .from('messages')
     .select('from_user, content, attachment_url, attachment_kind, attachment_filename, created_at')
-    .eq('channel', 'general')
+    .eq('channel', DEFAULT_DB_CHANNEL)
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -621,10 +636,10 @@ async function trySend() {
   input.textContent = '';
   $('input-placeholder').style.display = '';
 
-  bcast('chat_message', { from: myUsername, content });
+  bcast(EVENTS.CHAT_MESSAGE, { from: myUsername, content });
   appendMsg(myUsername, content);
 
-  const { error } = await sb.from('messages').insert({ from_user: myUsername, content, channel: 'general' });
+  const { error } = await sb.from('messages').insert({ from_user: myUsername, content, channel: DEFAULT_DB_CHANNEL });
   if (error) sysMsg(`⚠ Message not saved to history: ${error.message}`);
 }
 
@@ -643,27 +658,22 @@ async function uploadMedia(file) {
   if (uploadErr) { sysMsg(`Upload failed: ${uploadErr.message}`); return; }
 
   const url      = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}`;
-  const kind     = kindForMime(file.type);
+  const kind     = mimeToKind(file.type);
   const filename = file.name;
   const caption  = $('message-input').textContent.trim();
   $('message-input').textContent = '';
   $('input-placeholder').style.display = '';
 
   appendMsg(myUsername, caption, new Date(), true, { url, kind, filename });
-  await bcast('chat_media', { from: myUsername, content: caption, url, kind, filename });
+  await bcast(EVENTS.CHAT_MEDIA, { from: myUsername, content: caption, url, kind, filename });
 
   const { error: insertErr } = await sb.from('messages').insert({
-    from_user: myUsername, content: caption, channel: 'general',
+    from_user: myUsername, content: caption, channel: DEFAULT_DB_CHANNEL,
     attachment_url: url, attachment_kind: kind, attachment_filename: filename,
   });
   if (insertErr) sysMsg(`⚠ Media not saved to history: ${insertErr.message}`);
 }
 
-function kindForMime(mime) {
-  if (mime.startsWith('audio/')) return 'audio';
-  if (mime.startsWith('video/')) return 'video';
-  return 'image';
-}
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 function appendMsg(from, content, ts = new Date(), scroll = true, attachment = null) {

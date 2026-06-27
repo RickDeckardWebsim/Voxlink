@@ -8,10 +8,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use crate::net::webrtc::SignalingMsg;
 use crate::state::NetEvent;
 
-// Supabase details
-const WS_HOST: &str = "syftqwloslmnjyvppler.supabase.co";
-const ANON_KEY: &str = "sb_publishable_VK3kO0lX4tTsrHlCsH6JFQ_ebB6_lMH";
-const CHANNEL: &str  = "p2p-signaling";
+// Supabase Realtime details (shared constants live in crate::net::contract).
 const HEARTBEAT_S: u64 = 25;
 
 pub enum SigCmd {
@@ -24,6 +21,8 @@ pub enum SigCmd {
     BroadcastVoiceState { speaking: bool, muted: bool, in_voice: bool },
     /// Broadcast a display-name / avatar change so peers can update their peer list in real time.
     BroadcastProfileUpdate { new_username: String, avatar_url: Option<String>, description: Option<String> },
+    /// Broadcast our departure, then close the WebSocket gracefully.
+    BroadcastPeerLeave,
     Disconnect,
 }
 
@@ -61,11 +60,11 @@ async fn connect_and_run(
     webrtc_tx: &mpsc::UnboundedSender<SignalingMsg>,
     ctx: &egui::Context,
 ) -> Result<bool> {
-    let url = format!("wss://{}/realtime/v1/websocket?apikey={}&vsn=1.0.0", WS_HOST, ANON_KEY);
+    let url = format!("wss://{}/realtime/v1/websocket?apikey={}&vsn=1.0.0", crate::net::contract::SUPABASE_URL.trim_start_matches("https://"), crate::net::contract::SUPABASE_ANON_KEY);
     let (mut ws_stream, _) = connect_async(&url).await.context("WS connect failed")?;
 
     let join_msg = json!({
-        "topic": format!("realtime:{}", CHANNEL),
+        "topic": crate::net::contract::SIGNALING_TOPIC,
         "event": "phx_join",
         "payload": {
             "config": {
@@ -109,10 +108,18 @@ async fn connect_and_run(
             cmd_opt = sig_cmd_rx.recv() => {
                 if let Some(cmd) = cmd_opt {
                     match cmd {
+                        SigCmd::BroadcastPeerLeave => {
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::PEER_LEAVE, json!({
+                                "from": username,
+                            }), &mut ref_count);
+                            // best-effort: ignore send errors so a half-open socket still lets us disconnect
+                            let _ = send_text(&mut ws_stream, &broadcast).await;
+                        }
                         SigCmd::Disconnect => return Ok(true),
                         SigCmd::BroadcastPeerJoin { avatar_url, description } => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "peer_join", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::PEER_JOIN, json!({
                                 "from":        username,
                                 "avatar_url":  avatar_url,
                                 "description": description,
@@ -120,8 +127,8 @@ async fn connect_and_run(
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::SendOffer { to, sdp } => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "sdp_offer", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::SDP_OFFER, json!({
                                 "from": username,
                                 "to": to,
                                 "sdp": sdp
@@ -129,8 +136,8 @@ async fn connect_and_run(
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::SendAnswer { to, sdp } => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "sdp_answer", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::SDP_ANSWER, json!({
                                 "from": username,
                                 "to": to,
                                 "sdp": sdp
@@ -138,16 +145,16 @@ async fn connect_and_run(
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::BroadcastMessage(content) => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "chat_message", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::CHAT_MESSAGE, json!({
                                 "from": username,
                                 "content": content,
                             }), &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::BroadcastMedia { caption, url, kind, filename } => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "chat_media", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::CHAT_MEDIA, json!({
                                 "from": username,
                                 "content": caption,
                                 "url": url,
@@ -157,8 +164,8 @@ async fn connect_and_run(
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::BroadcastVoiceState { speaking, muted, in_voice } => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "voice_state", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::VOICE_STATE, json!({
                                 "from":     username,
                                 "speaking": speaking,
                                 "muted":    muted,
@@ -167,8 +174,8 @@ async fn connect_and_run(
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::BroadcastProfileUpdate { new_username, avatar_url, description } => {
-                            let topic = format!("realtime:{}", CHANNEL);
-                            let broadcast = make_broadcast(&topic, "profile_update", json!({
+                            let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::PROFILE_UPDATE, json!({
                                 "from":         username,
                                 "new_username": new_username,
                                 "avatar_url":   avatar_url,
@@ -220,7 +227,7 @@ fn handle_incoming(
             if from == username { return; }
 
             match b_event {
-                "peer_join" => {
+                crate::net::contract::event::PEER_JOIN => {
                     let avatar_url  = b_payload["avatar_url"].as_str().map(str::to_owned);
                     let description = b_payload["description"].as_str().map(str::to_owned);
                     let _ = net_tx.send(NetEvent::PeerJoined {
@@ -231,26 +238,26 @@ fn handle_incoming(
                     let _ = webrtc_tx.send(SignalingMsg::PeerJoined(from.to_string()));
                     ctx.request_repaint();
                 }
-                "peer_leave" => {
+                crate::net::contract::event::PEER_LEAVE => {
                     let _ = net_tx.send(NetEvent::PeerLeft(from.to_string()));
                     let _ = webrtc_tx.send(SignalingMsg::PeerLeft(from.to_string()));
                     ctx.request_repaint();
                 }
-                "sdp_offer" => {
+                crate::net::contract::event::SDP_OFFER => {
                     if to == username {
                         if let Some(sdp) = b_payload["sdp"].as_str() {
                             let _ = webrtc_tx.send(SignalingMsg::Offer { from: from.to_string(), sdp: sdp.to_string() });
                         }
                     }
                 }
-                "sdp_answer" => {
+                crate::net::contract::event::SDP_ANSWER => {
                     if to == username {
                         if let Some(sdp) = b_payload["sdp"].as_str() {
                             let _ = webrtc_tx.send(SignalingMsg::Answer { from: from.to_string(), sdp: sdp.to_string() });
                         }
                     }
                 }
-                "chat_message" => {
+                crate::net::contract::event::CHAT_MESSAGE => {
                     if let Some(content) = b_payload["content"].as_str() {
                         let _ = net_tx.send(NetEvent::MessageReceived {
                             from: from.to_string(),
@@ -260,7 +267,7 @@ fn handle_incoming(
                         ctx.request_repaint();
                     }
                 }
-                "voice_state" => {
+                crate::net::contract::event::VOICE_STATE => {
                     let speaking = b_payload["speaking"].as_bool().unwrap_or(false);
                     let muted    = b_payload["muted"].as_bool().unwrap_or(false);
                     let in_voice = b_payload["in_voice"].as_bool().unwrap_or(false);
@@ -272,7 +279,7 @@ fn handle_incoming(
                     });
                     ctx.request_repaint();
                 }
-                "profile_update" => {
+                crate::net::contract::event::PROFILE_UPDATE => {
                     let new_username = b_payload["new_username"].as_str()
                         .unwrap_or(from).to_owned();
                     let avatar_url  = b_payload["avatar_url"].as_str().map(str::to_owned);
@@ -285,17 +292,13 @@ fn handle_incoming(
                     });
                     ctx.request_repaint();
                 }
-                "chat_media" => {
+                crate::net::contract::event::CHAT_MEDIA => {
                     let content  = b_payload["content"].as_str().unwrap_or("").to_string();
                     let url      = b_payload["url"].as_str().unwrap_or("").to_string();
                     let kind_str = b_payload["kind"].as_str().unwrap_or("image");
                     let filename = b_payload["filename"].as_str().unwrap_or("attachment").to_string();
 
-                    let kind = match kind_str {
-                        "audio" => crate::state::AttachmentKind::Audio,
-                        "video" => crate::state::AttachmentKind::Video,
-                        _       => crate::state::AttachmentKind::Image,
-                    };
+                    let kind = crate::state::AttachmentKind::from_str(kind_str);
                     let attachment = if url.is_empty() { None } else {
                         Some(crate::state::Attachment { url, kind, filename })
                     };

@@ -295,6 +295,7 @@ pub async fn run(
                 if let Some(cmd) = cmd {
                     match cmd {
                         UiCommand::Disconnect => {
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastPeerLeave);
                             let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::Disconnect);
                             break;
                         }
