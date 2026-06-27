@@ -126,6 +126,7 @@ function bindEvents() {
   $('send-btn').addEventListener('click', trySend);
 
   const input = $('message-input');
+  const ph = $('input-placeholder');
   input.addEventListener('input', () => {
     ph.style.display = input.textContent.trim() ? 'none' : '';
     const now = Date.now();
