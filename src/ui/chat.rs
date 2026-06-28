@@ -674,6 +674,7 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
                     thread::spawn(move || {
                         if let Err(e) = crate::net::supabase::insert_message(
                             &at, &from, &caption, Some(&att_db),
+                            &Uuid::new_v4().to_string(), None,
                         ) {
                             log::warn!("[chat] DB insert (media) failed: {}", e);
                         }
@@ -770,7 +771,7 @@ fn try_send_message(state: &mut AppState) {
         let at   = s.access_token.clone();
         let from = state.username.clone();
         thread::spawn(move || {
-            if let Err(e) = crate::net::supabase::insert_message(&at, &from, &content, None) {
+            if let Err(e) = crate::net::supabase::insert_message(&at, &from, &content, None, &Uuid::new_v4().to_string(), None) {
                 log::warn!("[chat] DB insert failed: {}", e);
             }
         });
