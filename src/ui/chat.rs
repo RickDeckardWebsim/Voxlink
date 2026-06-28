@@ -4,6 +4,7 @@
 
 use egui::{Color32, CornerRadius, Frame, Key, Margin, RichText, ScrollArea, Vec2};
 use std::thread;
+use uuid::Uuid;
 
 use crate::state::{AppState, MessageKind, ThemeOverride};
 use super::{components, theme, updater as update_ui};
@@ -652,13 +653,15 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
                     kind:     r.kind.clone(),
                     filename: r.filename.clone(),
                 };
-                state.push_own_media(r.caption.clone(), Some(att.clone()));
+                state.push_own_media(r.caption.clone(), Some(att.clone()), None);
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(crate::state::UiCommand::SendMedia {
                         caption:  r.caption.clone(),
                         url:      att.url.clone(),
                         kind:     att.kind.clone(),
                         filename: att.filename.clone(),
+                        message_id: Uuid::new_v4().to_string(),
+                        reply: None,
                     });
                 }
 
@@ -752,7 +755,11 @@ fn try_send_message(state: &mut AppState) {
     }
 
     if let Some(tx) = &state.cmd_tx {
-        let _ = tx.send(crate::state::UiCommand::SendMessage(content.clone()));
+        let _ = tx.send(crate::state::UiCommand::SendMessage {
+            content: content.clone(),
+            message_id: Uuid::new_v4().to_string(),
+            reply: None,
+        });
     }
 
     // Show locally (optimistic — sender doesn't receive own broadcast)
