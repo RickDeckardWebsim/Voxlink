@@ -33,11 +33,27 @@ const THEME_DEFAULTS = {
   '--mention-color':'#5865f2',
 };
 
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Compute the semi-transparent mention background from --mention-color.
+// Replaces color-mix() which has poor browser support (Chrome 111+).
+function updateMentionBg() {
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--mention-color').trim() || '#5865f2';
+  document.documentElement.style.setProperty('--mention-bg', hexToRgba(color, 0.15));
+}
+
 function loadTheme() {
   const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
   for (const [v, def] of Object.entries(THEME_DEFAULTS)) {
     document.documentElement.style.setProperty(v, saved[v] ?? def);
   }
+  updateMentionBg();
 }
 
 function setThemeColor(cssVar, value) {
@@ -45,6 +61,7 @@ function setThemeColor(cssVar, value) {
   const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
   saved[cssVar] = value;
   localStorage.setItem('voxlink_theme', JSON.stringify(saved));
+  if (cssVar === '--mention-color') updateMentionBg();
 }
 
 function resetThemeColor(cssVar) {
@@ -52,6 +69,7 @@ function resetThemeColor(cssVar) {
   const saved = JSON.parse(localStorage.getItem('voxlink_theme') ?? '{}');
   delete saved[cssVar];
   localStorage.setItem('voxlink_theme', JSON.stringify(saved));
+  if (cssVar === '--mention-color') updateMentionBg();
 }
 
 // Apply saved theme immediately (before first paint)
