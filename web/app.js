@@ -981,7 +981,9 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
 
   if (showHeader) {
     const group = document.createElement('div');
-    if (dbId) group.dataset.msgId = dbId;
+    // NOTE: data-msg-id lives on the per-message .msg-row below, not the
+    // group, so a group's continuation messages are individually addressable
+    // for reactions/replies and querySelector('[data-msg-id]') hits the row.
     group.className = 'msg-group';
 
     const isOwn = from === myUsername;
