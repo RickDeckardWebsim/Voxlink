@@ -961,6 +961,7 @@ async function uploadMedia(file) {
   const caption  = $('message-input').textContent.trim();
   $('message-input').textContent = '';
   $('input-placeholder').style.display = '';
+  bcast(EVENTS.TYPING, { from: myUsername, is_typing: false });
 
   const messageId = crypto.randomUUID();
   const reply = pendingReply ? {
