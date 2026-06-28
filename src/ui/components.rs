@@ -88,10 +88,11 @@ pub fn render_message(
     show_header: bool,
     avatar_url: Option<&str>,
     local_username: &str,
+    known_users: &[String],
 ) -> Option<MessageAction> {
     match msg.kind {
         MessageKind::System => { render_system_message(ui, msg); None }
-        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username),
+        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username, known_users),
     }
 }
 
@@ -115,13 +116,13 @@ fn render_system_message(ui: &mut Ui, msg: &ChatMessage) {
     });
     ui.add_space(4.0);
 }
-
 fn render_chat_message(
     ui: &mut Ui,
     msg: &ChatMessage,
     show_header: bool,
     avatar_url: Option<&str>,
     local_username: &str,
+    known_users: &[String],
 ) -> Option<MessageAction> {
     ui.add_space(if show_header { 10.0 } else { 1.0 });
 
@@ -157,12 +158,22 @@ fn render_chat_message(
                     );
                 });
             }
-            let content_resp = ui.add(
-                egui::Label::new(
-                    RichText::new(&msg.content).size(14.0).color(theme::TEXT_PRIMARY),
-                )
-                .wrap_mode(egui::TextWrapMode::Wrap),
-            );
+            // ── Content with @mention highlighting ───────────────────────────
+            // Split content into plain-text and mention segments. A `@<token>`
+            // is a mention iff <token> matches a known user (self or a peer);
+            // unmatched `@foo` renders as plain text. Mentions are styled in
+            // theme::BLURPLE; plain text in theme::TEXT_PRIMARY.
+            let segments = split_mentions(&msg.content, known_users);
+            let content_resp = ui.horizontal_wrapped(|ui| {
+                for (text, is_mention) in segments {
+                    let color = if is_mention { theme::BLURPLE } else { theme::TEXT_PRIMARY };
+                    ui.add(
+                        egui::Label::new(RichText::new(text).size(14.0).color(color))
+                            .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
+                }
+            })
+            .response;
             if let Some(att) = &msg.attachment {
                 render_attachment(ui, att);
             }
@@ -200,6 +211,71 @@ fn render_chat_message(
     });
 
     action
+}
+
+/// Split message content into `(text, is_mention)` segments for highlighting.
+///
+/// A `@<token>` is a mention iff:
+///   • the `@` is at the start of the content or preceded by a word boundary
+///     (whitespace or non-alphanumeric), and
+///   • `<token>` (the maximal run of username chars `[A-Za-z0-9_.\-]`) exactly
+///     equals a known username.
+/// Unmatched `@foo` (no known user) and everything else renders as plain text.
+fn split_mentions(content: &str, known_users: &[String]) -> Vec<(String, bool)> {
+    // Lookup set of known usernames for O(1) exact membership.
+    let known: std::collections::HashSet<&str> =
+        known_users.iter().map(|s| s.as_str()).collect();
+
+    let is_token_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-';
+
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    let mut plain = String::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        if chars[i] == '@' {
+            // Word-boundary check: @ must start the content or follow a
+            // non-alphanumeric, non-token char (e.g. whitespace, punctuation).
+            let at_boundary = i == 0 || !is_token_char(chars[i - 1]);
+            if at_boundary {
+                // Read the maximal token after '@'.
+                let start = i + 1;
+                let mut end = start;
+                while end < n && is_token_char(chars[end]) {
+                    end += 1;
+                }
+                if end > start {
+                    let token: String = chars[start..end].iter().collect();
+                    if known.contains(token.as_str()) {
+                        // Flush accumulated plain text first.
+                        if !plain.is_empty() {
+                            segments.push((std::mem::take(&mut plain), false));
+                        }
+                        // Emit the mention (include the '@').
+                        segments.push((format!("@{}", token), true));
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+        }
+        plain.push(chars[i]);
+        i += 1;
+    }
+
+    if !plain.is_empty() {
+        segments.push((plain, false));
+    }
+
+    // If nothing was produced (e.g. empty content), return one empty plain
+    // segment so the content row still lays out correctly.
+    if segments.is_empty() {
+        segments.push((String::new(), false));
+    }
+
+    segments
 }
 
 fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {

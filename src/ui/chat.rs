@@ -513,6 +513,10 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
             avatar_map.insert(peer.username.clone(), url.clone());
         }
     }
+    // Known usernames (self + connected peers) for @mention highlighting.
+    // A `@<token>` is highlighted iff token exactly matches one of these.
+    let mut known_users: Vec<String> = state.peers.iter().map(|p| p.username.clone()).collect();
+    known_users.push(state.username.clone());
 
     ScrollArea::vertical()
         .id_salt("messages_scroll")
@@ -533,7 +537,7 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
                     && !is_system;
 
                 let avatar_url = avatar_map.get(msg.author.as_str()).map(String::as_str);
-                let action = components::render_message(ui, msg, !same_author, avatar_url, &state.username);
+                let action = components::render_message(ui, msg, !same_author, avatar_url, &state.username, &known_users);
 
                 match action {
                     Some(components::MessageAction::ReactionToggle { message_id, emoji, active }) => {
