@@ -874,7 +874,7 @@ fn render_ping_toast(ctx: &egui::Context, state: &mut AppState) {
     let avatar_color = theme::avatar_color(&author);
 
     egui::Area::new(egui::Id::new("ping_toast"))
-        .fixed_pos(egui::pos2(16.0, 16.0))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 16.0))
         .order(egui::Order::Foreground)
         .interactable(true)
         .show(ctx, |ui| {
