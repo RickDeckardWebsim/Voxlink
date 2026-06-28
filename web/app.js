@@ -612,27 +612,53 @@ function showReactionPicker(x, y, messageId, targetEl) {
     picker.className = 'reaction-picker';
     document.body.appendChild(picker);
   }
-  // Clamp to viewport so the picker doesn't overflow on mobile
-  const pw = 220, ph = 48;
+  // Clamp to viewport so the picker doesn't overflow on mobile. The picker
+  // has two rows: emoji row + reply row.
+  const pw = 220, ph = 84;
   const maxX = window.innerWidth - pw - 8;
   const maxY = window.innerHeight - ph - 8;
   picker.style.left = `${Math.min(x, Math.max(0, maxX))}px`;
   picker.style.top  = `${Math.min(y, Math.max(0, maxY))}px`;
   picker.style.display = 'flex';
+  picker.style.flexDirection = 'column';
   picker.innerHTML = '';
+  const emojiRow = document.createElement('div');
+  emojiRow.style.display = 'flex';
+  emojiRow.style.flexWrap = 'wrap';
+  picker.appendChild(emojiRow);
   for (const emoji of QUICK_EMOJIS) {
     const btn = document.createElement('span');
     btn.className = 'picker-emoji';
     btn.textContent = emoji;
-    btn.onclick = () => {
+    btn.onclick = ev => {
+      ev.stopPropagation();
       const pillsEl = targetEl.closest('[data-msg-id]')?.querySelector('.msg-reactions');
       const reactions = pillsEl?._reactions ?? {};
       const already = Object.values(reactions).some(r => r.user === myUsername && r.emoji === emoji);
       toggleReaction(messageId, emoji, !already);
       picker.style.display = 'none';
     };
-    picker.appendChild(btn);
+    emojiRow.appendChild(btn);
   }
+  // Reply affordance — essential on touch where the hover reply button never
+  // appears. Reads author + content from the message's own DOM.
+  const replyBtn = document.createElement('button');
+  replyBtn.type = 'button';
+  replyBtn.className = 'picker-reply';
+  replyBtn.textContent = 'Reply';
+  replyBtn.onclick = ev => {
+    ev.stopPropagation();
+    const row = targetEl.closest('[data-msg-id]');
+    const group = row?.closest('.msg-group');
+    const authorEl = group?.querySelector('.msg-author');
+    const author = authorEl?.textContent || '';
+    const contentEl = row?.querySelector('.msg-content');
+    const msgContent = (contentEl?.textContent || '').slice(0, 100);
+    pendingReply = { dbId: row?.dataset.msgId, author, content: msgContent };
+    showReplyPreview();
+    picker.style.display = 'none';
+  };
+  picker.appendChild(replyBtn);
   setTimeout(() => {
     document.addEventListener('click', function close() {
       picker.style.display = 'none';
@@ -940,31 +966,28 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
       group.appendChild(refEl);
     }
 
-    // Hover Reply affordance — only when we have a dbId to reference
-    if (dbId) {
-      const replyBtn = document.createElement('button');
-      replyBtn.className = 'reply-btn';
-      replyBtn.type = 'button';
-      replyBtn.textContent = 'Reply';
-      replyBtn.onclick = ev => {
-        ev.stopPropagation();
-        pendingReply = { dbId: group.dataset.msgId, author: from, content: (content || '').slice(0, 100) };
-        showReplyPreview();
-      };
-      group.appendChild(replyBtn);
-    }
-
     container.appendChild(group);
     target = group;
   } else {
     target = container.lastElementChild ?? container;
   }
 
+  // Each individual message gets its own identity + reply affordance, so a
+  // continuation message (showHeader === false) is replyable on its own and
+  // carries its own dbId rather than borrowing the group's first-message id.
+  let msgEl = target;
+  if (dbId) {
+    msgEl = document.createElement('div');
+    msgEl.className = 'msg-row';
+    msgEl.dataset.msgId = dbId;
+    target.appendChild(msgEl);
+  }
+
   if (content) {
     const div = document.createElement('div');
     div.className   = 'msg-content';
     div.innerHTML = highlightMentions(content);
-    target.appendChild(div);
+    msgEl.appendChild(div);
   }
 
   if (attachment?.url) {
@@ -977,14 +1000,40 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     } else {
       wrap.innerHTML = `<img class="msg-img" src="${esc(attachment.url)}" alt="${esc(attachment.filename)}" loading="lazy">`;
     }
-    target.appendChild(wrap);
+    msgEl.appendChild(wrap);
   }
 
-  if (dbId && target) {
-    target.addEventListener('contextmenu', e => {
+  // Hover Reply affordance — every message with a dbId gets its own button.
+  if (dbId && msgEl) {
+    const replyBtn = document.createElement('button');
+    replyBtn.className = 'reply-btn';
+    replyBtn.type = 'button';
+    replyBtn.textContent = 'Reply';
+    replyBtn.onclick = ev => {
+      ev.stopPropagation();
+      pendingReply = { dbId: msgEl.dataset.msgId, author: from, content: (content || '').slice(0, 100) };
+      showReplyPreview();
+    };
+    msgEl.appendChild(replyBtn);
+  }
+
+
+  if (dbId && msgEl) {
+    msgEl.addEventListener('contextmenu', e => {
       e.preventDefault();
-      showReactionPicker(e.clientX, e.clientY, dbId, target);
+      showReactionPicker(e.clientX, e.clientY, dbId, msgEl);
     });
+    // Long-press for touch devices — contextmenu never fires on touch.
+    let pressTimer = null;
+    msgEl.addEventListener('touchstart', e => {
+      const touch = e.touches[0];
+      pressTimer = setTimeout(() => {
+        e.preventDefault();
+        showReactionPicker(touch.clientX, touch.clientY, dbId, msgEl);
+      }, 500);
+    }, { passive: true });
+    msgEl.addEventListener('touchmove', () => { clearTimeout(pressTimer); }, { passive: true });
+    msgEl.addEventListener('touchend', () => { clearTimeout(pressTimer); }, { passive: true });
   }
   if (scroll) scrollBottom();
 }

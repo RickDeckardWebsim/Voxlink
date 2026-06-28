@@ -783,6 +783,8 @@ html, body {
 }
 .picker-emoji { font-size: 20px; cursor: pointer; padding: 4px 6px; border-radius: 4px; }
 .picker-emoji:hover { background: #3f4147; }
+.picker-reply { margin-top: 4px; padding: 4px 8px; font-size: 12px; color: var(--text-muted); background: var(--elevated-bg, #2b2d31); border: 1px solid var(--separator, #3f4147); border-radius: 4px; cursor: pointer; align-self: stretch; text-align: center; }
+.picker-reply:hover { color: var(--text-primary); background: var(--hover-bg, #3f4147); }
 
 /* ── Replies + mentions + notification (Task 8) ─────────────────────────────── */
 .msg-reply-ref { font-size: 11px; color: var(--text-muted); margin: 2px 0 4px; border-left: 2px solid var(--separator); padding-left: 6px; }
