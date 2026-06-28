@@ -184,6 +184,11 @@ pub fn render_modal(ctx: &egui::Context, state: &mut AppState) {
                             |t, v| t.chat_bg = v,
                             theme::DARK_BG,
                         );
+                        color_row(ui, state, "Mention & ping color",
+                            |t| t.mention_color,
+                            |t, v| t.mention_color = v,
+                            theme::BLURPLE,
+                        );
 
                         ui.add_space(16.0);
 

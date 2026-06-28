@@ -34,6 +34,9 @@ pub struct ThemeOverride {
     /// Message area, channel header strip, and input-bar outer panel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_bg: Option<[u8; 4]>,
+    /// Mention highlight + ping toast accent color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mention_color: Option<[u8; 4]>,
 }
 
 impl ThemeOverride {
@@ -253,6 +256,15 @@ pub struct ReplyTarget {
     pub content: String,
 }
 
+/// A ping toast notification shown when the user is @mentioned.
+/// `content` is truncated to 120 chars for the preview.
+#[derive(Debug, Clone)]
+pub struct PingToast {
+    pub author: String,
+    pub content: String,
+    pub set_at: std::time::Instant,
+}
+
 /// Unix epoch seconds — used for system-message age checks.
 pub fn unix_now() -> u64 {
     std::time::SystemTime::now()
@@ -470,6 +482,9 @@ pub struct AppState {
     /// The message currently being replied to (None = normal compose). Set by the
     /// "Reply" context-menu action; cleared on send or ESC.
     pub reply_target: Option<ReplyTarget>,
+    /// Active ping toast notification (set when @mentioned by a peer).
+    /// Auto-dismisses after 5 seconds via the toast_set_at timestamp.
+    pub ping_toast: Option<PingToast>,
 
     // ── Voice ──
     pub voice_active: bool,
@@ -558,6 +573,7 @@ impl Default for AppState {
             typing_users: Vec::new(),
             last_typing_ping: std::time::Instant::now(),
             reply_target: None,
+            ping_toast: None,
             voice_active: false,
             is_muted: false,
             is_speaking: false,

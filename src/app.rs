@@ -270,10 +270,14 @@ impl AppState {
             }
 
             NetEvent::MessageReceived { from, content, attachment, message_id, reply_to, reply_to_author, reply_to_content } => {
-                // Mention ping: if the message content contains @<local username>, play a sound.
-                let mention = format!("@{}", self.username);
-                if content.contains(&mention) {
+                // Mention ping: word-boundary check so "@jo" doesn't match "@joseph".
+                if crate::ui::components::is_mentioned(&content, &self.username) {
                     crate::audio::notification::play_notification();
+                    self.ping_toast = Some(crate::state::PingToast {
+                        author: from.clone(),
+                        content: content.chars().take(120).collect(),
+                        set_at: std::time::Instant::now(),
+                    });
                 }
                 let reply = match (reply_to, reply_to_author, reply_to_content) {
                     (Some(to), Some(author), Some(c)) => Some((to, author, c)),

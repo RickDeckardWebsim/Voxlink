@@ -29,7 +29,8 @@ const THEME_DEFAULTS = {
   '--logo-text':   '#ffffff',
   '--input-bg':    '#484b54',
   '--input-text':  '#dbdee1',
-  '--header-text': '#dbdee1',
+  '--header-text':  '#dbdee1',
+  '--mention-color':'#5865f2',
 };
 
 function loadTheme() {
@@ -530,14 +531,14 @@ function onChatMessage({ from, content, message_id, reply_to, reply_to_author, r
   if (!from || !content) return;
   const reply = reply_to ? { reply_to, reply_to_author, reply_to_content } : null;
   appendMsg(from, content, new Date(), true, null, message_id || null, reply);
-  if (mentionsUser(content, myUsername)) playNotification();
+  if (mentionsUser(content, myUsername)) { playNotification(); showPingToast(from, content); }
 }
 
 function onChatMedia({ from, content, url, kind, filename, message_id, reply_to, reply_to_author, reply_to_content }) {
   if (!from || !url) return;
   const reply = reply_to ? { reply_to, reply_to_author, reply_to_content } : null;
   appendMsg(from, content || '', new Date(), true, { url, kind: kind || 'image', filename: filename || 'attachment' }, message_id || null, reply);
-  if (mentionsUser(content || '', myUsername)) playNotification();
+  if (mentionsUser(content || '', myUsername)) { playNotification(); showPingToast(from, content || ''); }
 }
 
 function onVoiceState({ from, speaking, muted, in_voice }) {
@@ -1194,6 +1195,28 @@ function playNotification() {
   if (!notificationAudio) notificationAudio = new Audio('notification.mp3');
   notificationAudio.currentTime = 0;
   notificationAudio.play().catch(() => {}); // autoplay blocks until a user gesture
+}
+
+let pingToastTimer = null;
+function showPingToast(from, content) {
+  const toast = $('ping-toast');
+  if (!toast) return;
+  // Populate avatar + text
+  const av = $('ping-avatar');
+  if (av) { av.style.background = avatarColor(from); av.textContent = (from[0] ?? '?').toUpperCase(); }
+  const title = $('ping-title');
+  if (title) title.textContent = `${from} mentioned you`;
+  const preview = $('ping-preview');
+  if (preview) preview.textContent = content.replace(/<[^>]*>/g, '').slice(0, 120);
+  // Show with slide-in animation
+  toast.classList.remove('hide');
+  toast.classList.add('show');
+  // Auto-dismiss after 5 seconds
+  clearTimeout(pingToastTimer);
+  pingToastTimer = setTimeout(() => {
+    toast.classList.remove('show');
+    toast.classList.add('hide');
+  }, 5000);
 }
 
 // Browsers gate audio playback behind a user gesture; unlock on first

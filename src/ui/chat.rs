@@ -107,6 +107,7 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
         });
 
     crate::ui::profile::render_modal(ctx, state);
+    render_ping_toast(ctx, state);
     components::render_inspect_panel(ctx, state);
 }
 
@@ -518,6 +519,10 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
     let mut known_users: Vec<String> = state.peers.iter().map(|p| p.username.clone()).collect();
     known_users.push(state.username.clone());
 
+    // Mention highlight color — user-customizable via the appearance picker.
+    let mention_color = state.theme_override.mention_color
+        .map(crate::state::ThemeOverride::c32)
+        .unwrap_or(crate::ui::theme::BLURPLE);
     ScrollArea::vertical()
         .id_salt("messages_scroll")
         .auto_shrink([false, false])
@@ -537,7 +542,7 @@ fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppSt
                     && !is_system;
 
                 let avatar_url = avatar_map.get(msg.author.as_str()).map(String::as_str);
-                let action = components::render_message(ui, msg, !same_author, avatar_url, &state.username, &known_users);
+                let action = components::render_message(ui, msg, !same_author, avatar_url, &state.username, &known_users, mention_color);
 
                 match action {
                     Some(components::MessageAction::ReactionToggle { message_id, emoji, active }) => {
@@ -840,4 +845,89 @@ fn try_send_message(state: &mut AppState) {
             }
         });
     }
+}
+
+// ── Ping toast notification ──────────────────────────────────────────────────
+
+/// Render a floating toast notification in the top-right when the user is @mentioned.
+/// Auto-dismisses after 5 seconds; click to dismiss early.
+fn render_ping_toast(ctx: &egui::Context, state: &mut AppState) {
+    // Auto-dismiss after 5 seconds
+    if let Some(toast) = &state.ping_toast {
+        if toast.set_at.elapsed() > std::time::Duration::from_secs(5) {
+            state.ping_toast = None;
+            return;
+        }
+    }
+
+    let toast = match &state.ping_toast {
+        Some(t) => t,
+        None => return,
+    };
+
+    let mention_color = state.theme_override.mention_color
+        .map(ThemeOverride::c32)
+        .unwrap_or(theme::BLURPLE);
+
+    let author = toast.author.clone();
+    let content = toast.content.clone();
+    let avatar_color = theme::avatar_color(&author);
+
+    egui::Area::new(egui::Id::new("ping_toast"))
+        .fixed_pos(egui::pos2(16.0, 16.0))
+        .order(egui::Order::Foreground)
+        .interactable(true)
+        .show(ctx, |ui| {
+            egui::Frame::default()
+                .fill(theme::ELEVATED_BG)
+                .corner_radius(CornerRadius::same(8u8))
+                .stroke(egui::Stroke::new(0.0, Color32::TRANSPARENT))
+                .inner_margin(Margin::same(12i8))
+                .show(ui, |ui| {
+                    ui.set_min_width(240.0);
+                    ui.set_max_width(340.0);
+                    ui.horizontal(|ui| {
+                        // Avatar circle
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::Vec2::splat(32.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().circle_filled(rect.center(), 16.0, avatar_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &author.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                            egui::FontId::proportional(14.0),
+                            Color32::WHITE,
+                        );
+
+                        ui.add_space(8.0);
+
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new(format!("{} mentioned you", author))
+                                    .size(13.0)
+                                    .color(mention_color)
+                                    .strong(),
+                            );
+                            let snippet: String = content.chars().take(100).collect();
+                            ui.label(
+                                RichText::new(snippet)
+                                    .size(12.0)
+                                    .color(theme::TEXT_MUTED),
+                            );
+                        });
+                    });
+                });
+
+            // Click anywhere on the toast to dismiss
+            let resp = ui.interact(
+                ui.min_rect(),
+                egui::Id::new("ping_toast_click"),
+                egui::Sense::click(),
+            );
+            if resp.clicked() {
+                state.ping_toast = None;
+            }
+        });
 }

@@ -229,6 +229,14 @@
       </div>
     </div>
 
+    <div class="color-pick-row">
+      <span class="color-pick-label">Mention &amp; ping color</span>
+      <div class="color-pick-actions">
+        <input type="color" class="color-pick-input" data-var="--mention-color">
+        <button class="color-pick-reset" data-var="--mention-color">Reset</button>
+      </div>
+    </div>
+
     <div class="color-pick-row" style="margin-bottom:4px">
       <span class="color-pick-label">Chat area background</span>
       <div class="color-pick-actions">
@@ -237,6 +245,15 @@
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- Ping notification toast — slides in when @mentioned -->
+<div id="ping-toast" onclick="this.classList.remove('show');this.classList.add('hide')">
+  <div class="ping-avatar" id="ping-avatar"></div>
+  <div class="ping-body">
+    <div class="ping-title" id="ping-title"></div>
+    <div class="ping-preview" id="ping-preview"></div>
   </div>
 </div>
 

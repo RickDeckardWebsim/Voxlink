@@ -89,10 +89,11 @@ pub fn render_message(
     avatar_url: Option<&str>,
     local_username: &str,
     known_users: &[String],
+    mention_color: Color32,
 ) -> Option<MessageAction> {
     match msg.kind {
         MessageKind::System => { render_system_message(ui, msg); None }
-        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username, known_users),
+        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username, known_users, mention_color),
     }
 }
 
@@ -116,6 +117,7 @@ fn render_system_message(ui: &mut Ui, msg: &ChatMessage) {
     });
     ui.add_space(4.0);
 }
+
 fn render_chat_message(
     ui: &mut Ui,
     msg: &ChatMessage,
@@ -123,6 +125,7 @@ fn render_chat_message(
     avatar_url: Option<&str>,
     local_username: &str,
     known_users: &[String],
+    mention_color: Color32,
 ) -> Option<MessageAction> {
     ui.add_space(if show_header { 10.0 } else { 1.0 });
 
@@ -162,11 +165,11 @@ fn render_chat_message(
             // Split content into plain-text and mention segments. A `@<token>`
             // is a mention iff <token> matches a known user (self or a peer);
             // unmatched `@foo` renders as plain text. Mentions are styled in
-            // theme::BLURPLE; plain text in theme::TEXT_PRIMARY.
+            // the user-customizable mention color; plain text in theme::TEXT_PRIMARY.
             let segments = split_mentions(&msg.content, known_users);
             let content_resp = ui.horizontal_wrapped(|ui| {
                 for (text, is_mention) in segments {
-                    let color = if is_mention { theme::BLURPLE } else { theme::TEXT_PRIMARY };
+                    let color = if is_mention { mention_color } else { theme::TEXT_PRIMARY };
                     ui.add(
                         egui::Label::new(RichText::new(text).size(14.0).color(color))
                             .wrap_mode(egui::TextWrapMode::Wrap),
@@ -276,6 +279,40 @@ fn split_mentions(content: &str, known_users: &[String]) -> Vec<(String, bool)> 
     }
 
     segments
+}
+
+/// True if `content` contains an @mention of `username` at a word boundary.
+/// Mirrors the web `mentionsUser` regex semantics — `@jo` does NOT match
+/// `@joseph`. Uses the same token-char and boundary rules as `split_mentions`.
+pub fn is_mentioned(content: &str, username: &str) -> bool {
+    if username.is_empty() { return false; }
+    let is_token_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-';
+    let chars: Vec<char> = content.chars().collect();
+    let n = chars.len();
+    let target: Vec<char> = username.chars().collect();
+    let mut i = 0;
+    while i < n {
+        if chars[i] == '@' {
+            let at_boundary = i == 0 || !is_token_char(chars[i - 1]);
+            if at_boundary {
+                // Check if the token starting at i+1 exactly matches username
+                // AND is followed by a non-token char (word boundary on the right too).
+                let start = i + 1;
+                let mut end = start;
+                while end < n && is_token_char(chars[end]) {
+                    end += 1;
+                }
+                if end - start == target.len() {
+                    let token: String = chars[start..end].iter().collect();
+                    if token == username {
+                        return true;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
