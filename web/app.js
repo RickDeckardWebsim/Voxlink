@@ -1004,12 +1004,8 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     header.className = 'msg-header';
     header.innerHTML = `<span class="msg-author" style="color:${color}">${esc(from)}</span><span class="msg-time">${fmtTime(ts)}</span>`;
     group.appendChild(header);
-    if (reply) {
-      const refEl = document.createElement('div');
-      refEl.className = 'msg-reply-ref';
-      refEl.innerHTML = `<span class="reply-arrow">↪</span> @${esc(reply.reply_to_author)}: ${esc(reply.reply_to_content)}`;
-      group.appendChild(refEl);
-    }
+    // Reply ref moved to per-message .msg-row below (renders for both
+    // header and continuation messages).
 
     container.appendChild(group);
     target = group;
@@ -1026,6 +1022,15 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     msgEl.className = 'msg-row';
     msgEl.dataset.msgId = dbId;
     target.appendChild(msgEl);
+  }
+
+  // Reply reference — rendered on every message that has reply data, including
+  // continuation messages (showHeader === false) where it was previously lost.
+  if (reply && msgEl) {
+    const refEl = document.createElement('div');
+    refEl.className = 'msg-reply-ref';
+    refEl.innerHTML = `<span class="reply-arrow">↪</span> @${esc(reply.reply_to_author)}: ${esc(reply.reply_to_content)}`;
+    msgEl.appendChild(refEl);
   }
 
   if (content) {
