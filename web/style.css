@@ -796,3 +796,8 @@ html, body {
 .msg-group .reply-btn { display: none; position: absolute; top: 0; right: 8px; background: var(--elevated-bg); border: 1px solid var(--separator); border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--text-muted); }
 .msg-group:hover .reply-btn { display: inline-block; }
 .reply-btn:hover { color: var(--text-primary); }
+
+/* @username autocomplete dropdown */
+.mention-dropdown { display: none; position: absolute; bottom: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: var(--elevated-bg, #2b2d31); border: 1px solid var(--separator, #3f4147); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 100; margin-bottom: 4px; }
+.mention-item { padding: 8px 12px; cursor: pointer; color: var(--text-primary, #dbdee1); font-size: 14px; }
+.mention-item:hover, .mention-item.selected { background: rgba(88,101,242,0.15); color: var(--blurple, #5865f2); }

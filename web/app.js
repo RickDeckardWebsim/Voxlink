@@ -137,8 +137,50 @@ function bindEvents() {
       lastTypingPing = now;
       bcast(EVENTS.TYPING, { from: myUsername, is_typing: true });
     }
+    // @username autocomplete — detect a partial @token at the cursor and
+    // filter knownUsers against it.
+    const token = getMentionToken(input.textContent);
+    if (token) {
+      const partial = token.partial.toLowerCase();
+      const matches = [...knownUsers].filter(u => u.toLowerCase().startsWith(partial)).sort();
+      if (matches.length) showMentionDropdown(matches, input);
+      else hideMentionDropdown();
+    } else {
+      hideMentionDropdown();
+    }
   });
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trySend(); } });
+  input.addEventListener('keydown', e => {
+    const dd = $('mention-dropdown');
+    if (dd && dd.style.display === 'block') {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveMentionSelection(dd, 1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveMentionSelection(dd, -1);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        const items = dd.querySelectorAll('.mention-item');
+        if (items.length) {
+          e.preventDefault();
+          items[dd._mentionIndex ?? 0].click();
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMentionDropdown();
+        return;
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trySend(); }
+  });
+  // Close the dropdown when focus leaves the input (slight delay so a click
+  // on a dropdown item registers before blur hides it).
+  input.addEventListener('blur', () => { setTimeout(hideMentionDropdown, 150); });
 
   // Media attach
   $('attach-btn').addEventListener('click', () => $('file-input').click());
@@ -1063,6 +1105,73 @@ function mentionsUser(text, username) {
   if (!username) return false;
   const re = new RegExp('@' + escapeRegex(username) + '\\b');
   return re.test(text);
+}
+
+// ── @username autocomplete dropdown ───────────────────────────────────────────
+
+// Extract the partial @mention token the user is currently typing.
+// Returns { atIdx, partial } when there's an '@' followed by zero or more
+// word chars with no whitespace after it, otherwise null.
+function getMentionToken(text) {
+  const atIdx = text.lastIndexOf('@');
+  if (atIdx === -1) return null;
+  const after = text.slice(atIdx + 1);
+  // A space after the '@' means it's no longer a mention in progress.
+  if (/\s/.test(after)) return null;
+  const match = after.match(/^[\w.-]*/);
+  return { atIdx, partial: match ? match[0] : '' };
+}
+
+function showMentionDropdown(matches, inputEl) {
+  const dd = $('mention-dropdown');
+  if (!dd || !matches.length) { hideMentionDropdown(); return; }
+  dd.innerHTML = '';
+  matches.slice(0, 8).forEach((user, i) => {
+    const item = document.createElement('div');
+    item.className = 'mention-item' + (i === 0 ? ' selected' : '');
+    item.textContent = user;
+    item.onclick = () => insertMention(user, inputEl);
+    dd.appendChild(item);
+  });
+  dd.style.display = 'block';
+  dd._mentionMatches = matches;
+  dd._mentionIndex = 0;
+}
+
+function hideMentionDropdown() {
+  const dd = $('mention-dropdown');
+  if (dd) { dd.style.display = 'none'; dd._mentionMatches = null; }
+}
+
+function moveMentionSelection(dd, delta) {
+  const items = dd.querySelectorAll('.mention-item');
+  if (!items.length) return;
+  const n = items.length;
+  let idx = (dd._mentionIndex ?? 0) + delta;
+  if (idx < 0) idx = n - 1;
+  if (idx >= n) idx = 0;
+  dd._mentionIndex = idx;
+  items.forEach((it, i) => it.classList.toggle('selected', i === idx));
+  items[idx].scrollIntoView({ block: 'nearest' });
+}
+
+function insertMention(username, inputEl) {
+  const text = inputEl.textContent;
+  const atIdx = text.lastIndexOf('@');
+  if (atIdx === -1) { hideMentionDropdown(); return; }
+  const before = text.slice(0, atIdx);
+  const after = text.slice(atIdx + 1).replace(/^[\w.-]*/, '');
+  inputEl.textContent = before + '@' + username + ' ' + after;
+  // Place the cursor right after the inserted mention + trailing space.
+  const sel = window.getSelection();
+  const range = document.createRange();
+  inputEl.focus();
+  range.selectNodeContents(inputEl);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  hideMentionDropdown();
+  $('input-placeholder').style.display = inputEl.textContent ? 'none' : '';
 }
 
 function showReplyPreview() {
