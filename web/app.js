@@ -647,7 +647,12 @@ async function getOrCreatePc(username) {
   audio.srcObject = remoteStream;
   $('audio-elements').appendChild(audio);
 
-  pc.ontrack = e => { e.streams[0]?.getTracks().forEach(t => remoteStream.addTrack(t)); };
+  pc.ontrack = e => {
+    e.streams[0]?.getTracks().forEach(t => remoteStream.addTrack(t));
+    // Explicitly play — autoplay can be blocked by browser policy, and the
+    // user granting mic access counts as a gesture that allows this play() call.
+    audio.play().catch(err => console.warn(`[voice] audio.play() blocked for ${username}:`, err.message));
+  };
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
       pc.close(); delete peerConns[username]; removeAudio(username);

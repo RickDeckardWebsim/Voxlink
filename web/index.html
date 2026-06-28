@@ -237,8 +237,8 @@
   </div>
 </div>
 
-<!-- Hidden audio container -->
-<div id="audio-elements" style="display:none"></div>
+<!-- Audio container — off-screen but rendered (display:none blocks autoplay in Chrome) -->
+<div id="audio-elements" style="position:fixed;width:0;height:0;overflow:hidden;left:-9999px;"></div>
 
 <script type="module" src="app.js"></script>
 </body>
