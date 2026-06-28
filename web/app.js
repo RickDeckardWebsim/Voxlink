@@ -488,14 +488,14 @@ function onChatMessage({ from, content, message_id, reply_to, reply_to_author, r
   if (!from || !content) return;
   const reply = reply_to ? { reply_to, reply_to_author, reply_to_content } : null;
   appendMsg(from, content, new Date(), true, null, message_id || null, reply);
-  if (content.includes(`@${myUsername}`)) playNotification();
+  if (mentionsUser(content, myUsername)) playNotification();
 }
 
 function onChatMedia({ from, content, url, kind, filename, message_id, reply_to, reply_to_author, reply_to_content }) {
   if (!from || !url) return;
   const reply = reply_to ? { reply_to, reply_to_author, reply_to_content } : null;
   appendMsg(from, content || '', new Date(), true, { url, kind: kind || 'image', filename: filename || 'attachment' }, message_id || null, reply);
-  if ((content || '').includes(`@${myUsername}`)) playNotification();
+  if (mentionsUser(content || '', myUsername)) playNotification();
 }
 
 function onVoiceState({ from, speaking, muted, in_voice }) {
@@ -1042,13 +1042,27 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
 
 // Wrap @<knownUsername> in a highlight span. HTML-escaped first, so the
 // injected <span> markup is the only unescaped text in the result.
+// Matches must be word-bounded so a short username like "jo" does not
+// corrupt "@joseph" — and longest names are processed first so "joseph"
+// wins over "jo" when both are known users.
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 function highlightMentions(text) {
   let html = esc(text);
-  for (const user of knownUsers) {
-    const mention = `@${user}`;
-    html = html.split(mention).join(`<span class="mention">${mention}</span>`);
+  const users = [...knownUsers].sort((a, b) => b.length - a.length);
+  for (const user of users) {
+    const re = new RegExp('@' + escapeRegex(user) + '\\b', 'g');
+    html = html.replace(re, `<span class="mention">@${user}</span>`);
   }
   return html;
+}
+
+// True if text contains an @mention of the given username at a word
+// boundary (so "@joseph" does not count as a ping for user "jo").
+function mentionsUser(text, username) {
+  if (!username) return false;
+  const re = new RegExp('@' + escapeRegex(username) + '\\b');
+  return re.test(text);
 }
 
 function showReplyPreview() {
@@ -1071,8 +1085,14 @@ function playNotification() {
   notificationAudio.play().catch(() => {}); // autoplay blocks until a user gesture
 }
 
-// Browsers gate audio playback behind a user gesture; unlock on first interaction.
-document.addEventListener('pointerdown', () => { playNotification(); }, { once: true });
+// Browsers gate audio playback behind a user gesture; unlock on first
+// interaction by playing silently (volume 0) then restoring volume, so the
+// first touch does not blast the notification sound audibly.
+document.addEventListener('pointerdown', () => {
+  if (!notificationAudio) notificationAudio = new Audio('notification.mp3');
+  notificationAudio.volume = 0;
+  notificationAudio.play().then(() => { notificationAudio.volume = 1; }).catch(() => {});
+}, { once: true });
 
 function sysMsg(text) { appendMsg('__system', text); }
 
