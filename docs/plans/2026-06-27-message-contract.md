@@ -26,8 +26,11 @@ CREATE TABLE IF NOT EXISTS messages (
   from_user           TEXT        NOT NULL,
   content             TEXT        NOT NULL DEFAULT '',
   attachment_url      TEXT,
-  attachment_kind     TEXT,        -- 'image' | 'audio' | 'video'  (lowercase, see §5)
+  attachment_kind     TEXT,
   attachment_filename TEXT,
+  reply_to_id         UUID        REFERENCES messages(id) ON DELETE SET NULL,
+  reply_to_author     TEXT,
+  reply_to_content    TEXT,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
@@ -35,6 +38,7 @@ CREATE POLICY msg_read   ON messages FOR SELECT USING (true);
 CREATE POLICY msg_insert ON messages FOR INSERT TO authenticated WITH CHECK (true);
 CREATE INDEX messages_channel_time ON messages (channel, created_at DESC);
 ```
+- **Note:** `id` accepts an explicit client-generated UUID on insert (no schema change — the DEFAULT only fires when `id` is omitted). `reply_to_*` are nullable; existing `msg_read`/`msg_insert` RLS covers them.
 
 - Insert path: `POST {SUPABASE_URL}/rest/v1/messages` with `apikey` + `Authorization: Bearer <access_token>` + `Prefer: return=minimal`. Body always includes `channel` (= `DEFAULT_DB_CHANNEL`), `from_user`, `content`. Attachment columns set only when an attachment is present.
 - Fetch path: `GET {SUPABASE_URL}/rest/v1/messages?channel=eq.general&order=created_at.desc&limit=100`. Reverse client-side to chronological. History messages are non-expiring (use `unix_ts = 0`); system messages expire after 2 h.
@@ -58,12 +62,14 @@ Web clients use `sigChannel.send({ type: 'broadcast', event: '<EVENT>', payload:
 - **Known gap:** no `peer_leave` is ever *sent* by either client (see §6). Leave is inferred from Realtime disconnect.
 
 ### 4.2 `chat_message`
-**Payload:** `{ "from": String, "content": String }`
+**Payload:** `{ "from": String, "content": String, "message_id": String, "reply_to": String|null, "reply_to_author": String|null, "reply_to_content": String|null }`
+
+`message_id` is the client-generated UUID (native `Uuid::new_v4()`, web `crypto.randomUUID()`); the same value is sent in the DB insert's `id` field. `reply_to` is the parent message's UUID, or `null` for a non-reply. `reply_to_author`/`reply_to_content` are a denormalized snippet (content truncated to 100 chars by the sender) so receivers can render the reply reference without resolving the parent. Receivers treat `null` and missing-key identically.
 - Send: optimistic local display, then broadcast, then fire-and-forget DB insert (`attachment_*` columns omitted).
 - Recv: render as peer message with `attachment: None`.
 
 ### 4.3 `chat_media`
-**Payload:** `{ "from": String, "content": String /* caption, may be "" */, "url": String, "kind": "image"|"audio"|"video", "filename": String }`
+**Payload:** `{ "from": String, "content": String, "url": String, "kind": "image"|"audio"|"video", "filename": String, "message_id": String, "reply_to": String|null, "reply_to_author": String|null, "reply_to_content": String|null }`
 - Send: after a successful Storage upload to `avatars/chat/{user_id}/{ts}-{safe_name}`, broadcast with the public URL, then DB insert including `attachment_url`/`attachment_kind`/`attachment_filename`.
 - Recv: if `url` is empty, treat as a plain text message; else construct an `Attachment { url, kind, filename }` and render inline (image) or as a chip with "Open" (audio/video).
 - `content` is the user-typed caption, not the filename. May be `""`.
@@ -90,6 +96,9 @@ Web clients use `sigChannel.send({ type: 'broadcast', event: '<EVENT>', payload:
 
 ### 4.8 `peer_leave` (receive-only — see §6)
 **Payload:** `{ "from": String }` — defined for forward compatibility. Neither client currently sends it.
+
+### 4.9 Client-generated message id
+Both clients generate the message UUID locally (native `Uuid::new_v4()`, web `crypto.randomUUID()`) before broadcast and use it for: (a) the `message_id` field in `chat_message`/`chat_media`, (b) the optimistic message's `db_id` / `dataset.msgId`, (c) the explicit `id` in the `messages` insert. This is required because the send order is broadcast → DB insert, so a DB-generated UUID is not yet known at broadcast time. The `messages.id DEFAULT gen_random_uuid()` only fires when `id` is omitted; both clients now always send it.
 
 ## 5. Attachment kind
 
