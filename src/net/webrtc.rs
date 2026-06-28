@@ -118,6 +118,10 @@ pub async fn run(
                                     from,
                                     content: msg,
                                     attachment: None,
+                                    message_id: String::new(),
+                                    reply_to: None,
+                                    reply_to_author: None,
+                                    reply_to_content: None,
                                 });
                                 ctx.request_repaint();
                             }
@@ -299,20 +303,21 @@ pub async fn run(
                             let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::Disconnect);
                             break;
                         }
-                        UiCommand::SendMessage(content) => {
-                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastMessage(content));
+                        UiCommand::SendMessage { content, message_id, reply } => {
+                            let reply_tuple = reply.as_ref().map(|r| (r.db_id.clone(), r.author.clone(), r.content.clone()));
+                            let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastMessage {
+                                content, message_id, reply: reply_tuple,
+                            });
                         }
-                        UiCommand::SendMedia { caption, url, kind, filename } => {
+                        UiCommand::SendMedia { caption, url, kind, filename, message_id, reply } => {
                             let kind_str = match kind {
                                 crate::state::AttachmentKind::Image => "image",
                                 crate::state::AttachmentKind::Audio => "audio",
                                 crate::state::AttachmentKind::Video => "video",
                             };
+                            let reply_tuple = reply.as_ref().map(|r| (r.db_id.clone(), r.author.clone(), r.content.clone()));
                             let _ = sig_cmd_tx.send(crate::net::signaling::SigCmd::BroadcastMedia {
-                                caption,
-                                url,
-                                kind: kind_str.to_string(),
-                                filename,
+                                caption, url, kind: kind_str.to_string(), filename, message_id, reply: reply_tuple,
                             });
                         }
                         UiCommand::ToggleVoice(active) => {
