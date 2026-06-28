@@ -685,6 +685,7 @@ async function initiateCall(username) {
 
 async function onSdpOffer({ from, to, sdp }) {
   if (to !== myUsername) return;
+  if (!inVoice) return; // a non-voice peer must not answer voice calls
   const pc = await getOrCreatePc(from);
   await pc.setRemoteDescription({ type: 'offer', sdp });
   const answer = await pc.createAnswer();
@@ -723,13 +724,21 @@ async function joinVoice() {
 
   inVoice = true;
 
+  // Add our mic track to any peer connections that already exist (e.g. data
+  // channels created earlier). Renegotiation must be initiated by the side
+  // that added the track, so we re-offer to every peer currently in voice —
+  // not just those whose username sorts after ours. The lexicographic guard
+  // below is kept only for the initial-call case to avoid glare.
   for (const [username, pc] of Object.entries(peerConns)) {
     for (const track of localStream.getAudioTracks()) {
       if (!pc.getSenders().some(s => s.track === track)) pc.addTrack(track, localStream);
     }
-    if (myUsername < username) await initiateCall(username);
+    if (peers[username]?.inVoice) await initiateCall(username);
   }
 
+  // Initial calls to peers we don't yet have a PC with. Keep the
+  // myUsername < username guard here so two peers joining simultaneously
+  // don't both fire the first offer (glare).
   for (const username of Object.keys(peers)) {
     if (!peerConns[username] && myUsername < username) await initiateCall(username);
   }
