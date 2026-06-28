@@ -10,6 +10,8 @@ pub const SIGNALING_CHANNEL: &str = "p2p-signaling";
 pub const SIGNALING_TOPIC: &str = "realtime:p2p-signaling";
 
 /// Realtime broadcast event names. Canonical wire strings (spec §4).
+/// `chat_message` and `chat_media` payloads now carry `message_id` and
+/// `reply_to` / `reply_to_author` / `reply_to_content` (spec §4.2/§4.3/§4.9).
 /// `peer_leave` is receive-only today (spec §8); included for completeness.
 pub mod event {
     pub const PEER_JOIN: &str       = "peer_join";
