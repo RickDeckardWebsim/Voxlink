@@ -58,6 +58,28 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
+    // ── Reply preview bar (above the input bar, only while composing a reply) ─
+    if state.reply_target.is_some() {
+        egui::TopBottomPanel::bottom("reply_bar")
+            .resizable(false)
+            .exact_size(28.0)
+            .frame(Frame::default().fill(chat_fill).inner_margin(Margin { left: 16, right: 16, top: 4, bottom: 2 }))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let (author, content) = state.reply_target.as_ref()
+                        .map(|r| (r.author.clone(), r.content.clone()))
+                        .unwrap_or_default();
+                    let snippet: String = content.chars().take(80).collect();
+                    ui.label(RichText::new(format!("↪ Replying to {}: {}", author, snippet))
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED));
+                    if ui.small_button("✕").clicked() {
+                        state.reply_target = None;
+                    }
+                });
+            });
+    }
+
     // ── 3. Input bar (BOTTOM) — anchored to the window bottom edge ────────────
     egui::TopBottomPanel::bottom("input_bar")
         .resizable(false)
@@ -476,18 +498,18 @@ fn render_channel_header(ui: &mut egui::Ui, state: &AppState) {
 
 // render_message_area: fills the CentralPanel with a full-height scroll area.
 // The input bar is now a TopBottomPanel::bottom, so no manual height math needed.
-fn render_message_area(_ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState) {
+fn render_message_area(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState) {
     // Build a username → avatar URL lookup from live session + peer list so that
     // every chat message can show the correct profile picture next to its author.
     let mut avatar_map: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    if let Some(ref s) = state.session {
-        if let Some(ref url) = s.avatar_url {
+    if let Some(s) = &state.session {
+        if let Some(url) = &s.avatar_url {
             avatar_map.insert(state.username.clone(), url.clone());
         }
     }
     for peer in &state.peers {
-        if let Some(ref url) = peer.avatar_url {
+        if let Some(url) = &peer.avatar_url {
             avatar_map.insert(peer.username.clone(), url.clone());
         }
     }
@@ -511,39 +533,46 @@ fn render_message_area(_ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppS
                     && !is_system;
 
                 let avatar_url = avatar_map.get(msg.author.as_str()).map(String::as_str);
-                let reaction_toggle = components::render_message(ui, msg, !same_author, avatar_url, &state.username);
+                let action = components::render_message(ui, msg, !same_author, avatar_url, &state.username);
 
-                if let Some((message_id, emoji, active)) = reaction_toggle {
-                    // Optimistic local update
-                    if let Some(m) = state.messages.iter_mut().find(|m| m.db_id.as_deref() == Some(&message_id)) {
-                        if active {
-                            if !m.reactions.iter().any(|r| r.user == state.username && r.emoji == emoji) {
-                                m.reactions.push(crate::state::Reaction { user: state.username.clone(), emoji: emoji.clone() });
+                match action {
+                    Some(components::MessageAction::ReactionToggle { message_id, emoji, active }) => {
+                        // Optimistic local update
+                        if let Some(m) = state.messages.iter_mut().find(|m| m.db_id.as_deref() == Some(&message_id)) {
+                            if active {
+                                if !m.reactions.iter().any(|r| r.user == state.username && r.emoji == emoji) {
+                                    m.reactions.push(crate::state::Reaction { user: state.username.clone(), emoji: emoji.clone() });
+                                }
+                            } else {
+                                m.reactions.retain(|r| !(r.user == state.username && r.emoji == emoji));
                             }
-                        } else {
-                            m.reactions.retain(|r| !(r.user == state.username && r.emoji == emoji));
+                        }
+                        // Broadcast
+                        if let Some(tx) = &state.cmd_tx {
+                            let _ = tx.send(crate::state::UiCommand::SendReaction {
+                                message_id: message_id.clone(),
+                                emoji: emoji.clone(),
+                                active,
+                            });
+                        }
+                        // DB persist (fire-and-forget)
+                        if let Some(s) = &state.session {
+                            let at = s.access_token.clone();
+                            let user = state.username.clone();
+                            thread::spawn(move || {
+                                if active {
+                                    let _ = crate::net::supabase::insert_reaction(&at, &message_id, &user, &emoji);
+                                } else {
+                                    let _ = crate::net::supabase::delete_reaction(&at, &message_id, &user, &emoji);
+                                }
+                            });
                         }
                     }
-                    // Broadcast
-                    if let Some(tx) = &state.cmd_tx {
-                        let _ = tx.send(crate::state::UiCommand::SendReaction {
-                            message_id: message_id.clone(),
-                            emoji: emoji.clone(),
-                            active,
-                        });
+                    Some(components::MessageAction::Reply { db_id, author, content }) => {
+                        state.reply_target = Some(crate::state::ReplyTarget { db_id, author, content });
+                        ctx.memory_mut(|m| m.request_focus(egui::Id::new("message_input_field")));
                     }
-                    // DB persist (fire-and-forget)
-                    if let Some(ref s) = state.session {
-                        let at = s.access_token.clone();
-                        let user = state.username.clone();
-                        thread::spawn(move || {
-                            if active {
-                                let _ = crate::net::supabase::insert_reaction(&at, &message_id, &user, &emoji);
-                            } else {
-                                let _ = crate::net::supabase::delete_reaction(&at, &message_id, &user, &emoji);
-                            }
-                        });
-                    }
+                    None => {}
                 }
 
                 prev_author = Some(msg.author.as_str());
@@ -616,6 +645,10 @@ fn render_input_bar(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut AppState
                         try_send_message(state);
                         ctx.memory_mut(|m| m.request_focus(input_id));
                     }
+                    // ESC cancels an in-progress reply.
+                    if ctx.input(|i| i.key_pressed(Key::Escape)) && state.reply_target.is_some() {
+                        state.reply_target = None;
+                    }
                     // Typing indicator: send a ping on keystroke if throttled (1 / 3s).
                     if response.changed() && !state.message_input.trim().is_empty() {
                         let now = std::time::Instant::now();
@@ -641,7 +674,7 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
         match result {
             Ok(r) => {
                 // Persist refreshed tokens back into the session so future uploads don't retry.
-                if let Some(ref mut s) = state.session {
+                if let Some(s) = &mut state.session {
                     if let Some((at, rt)) = r.new_tokens {
                         s.access_token  = at;
                         s.refresh_token = rt;
@@ -653,28 +686,41 @@ fn poll_media_upload(ctx: &egui::Context, state: &mut AppState) {
                     kind:     r.kind.clone(),
                     filename: r.filename.clone(),
                 };
-                state.push_own_media(r.caption.clone(), Some(att.clone()), None);
+                // ONE message_id for broadcast, optimistic display, and DB insert.
+                let message_id = Uuid::new_v4().to_string();
+                let reply = state.reply_target.take(); // a reply may be pending when media is attached
+                let reply_ref = reply.as_ref();
+
+                // Optimistic local display — born with its db_id
+                state.push_own_media(r.caption.clone(), Some(att.clone()), reply_ref);
+                if let Some(m) = state.messages.last_mut() {
+                    m.db_id = Some(message_id.clone());
+                }
+
+                // Broadcast (carries message_id + reply)
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(crate::state::UiCommand::SendMedia {
                         caption:  r.caption.clone(),
                         url:      att.url.clone(),
                         kind:     att.kind.clone(),
                         filename: att.filename.clone(),
-                        message_id: Uuid::new_v4().to_string(),
-                        reply: None,
+                        message_id: message_id.clone(),
+                        reply: reply.clone(),
                     });
                 }
 
-                // Persist media message to DB (fire-and-forget)
-                if let Some(ref s) = state.session {
+                // Persist media message to DB (fire-and-forget) — explicit id + reply fields
+                if let Some(s) = &state.session {
                     let at      = s.access_token.clone();
                     let from    = state.username.clone();
                     let caption = r.caption.clone();
                     let att_db  = att.clone();
+                    let id      = message_id.clone();
+                    let reply_tuple = reply_ref.map(|r| (r.db_id.clone(), r.author.clone(), r.content.clone()));
                     thread::spawn(move || {
+                        let reply_args = reply_tuple.as_ref().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str()));
                         if let Err(e) = crate::net::supabase::insert_message(
-                            &at, &from, &caption, Some(&att_db),
-                            &Uuid::new_v4().to_string(), None,
+                            &at, &from, &caption, Some(&att_db), &id, reply_args,
                         ) {
                             log::warn!("[chat] DB insert (media) failed: {}", e);
                         }
@@ -755,23 +801,37 @@ fn try_send_message(state: &mut AppState) {
         let _ = tx.send(crate::state::UiCommand::SendTyping(false));
     }
 
+    // Generate ONE client-side message_id used for broadcast, optimistic display,
+    // and DB insert — so the optimistic message is born with its real db_id and
+    // reaction/reply FKs resolve immediately without a server round-trip.
+    let message_id = Uuid::new_v4().to_string();
+    let reply = state.reply_target.take(); // cleared on send
+    let reply_ref = reply.as_ref();
+
+    // Broadcast (carries message_id + reply)
     if let Some(tx) = &state.cmd_tx {
         let _ = tx.send(crate::state::UiCommand::SendMessage {
             content: content.clone(),
-            message_id: Uuid::new_v4().to_string(),
-            reply: None,
+            message_id: message_id.clone(),
+            reply: reply.clone(),
         });
     }
 
-    // Show locally (optimistic — sender doesn't receive own broadcast)
-    state.push_own(content.clone());
+    // Optimistic local display — born with its db_id
+    state.push_own_media(content.clone(), None, reply_ref);
+    if let Some(m) = state.messages.last_mut() {
+        m.db_id = Some(message_id.clone());
+    }
 
-    // Persist to DB (fire-and-forget — failures are logged, never block the UI)
-    if let Some(ref s) = state.session {
+    // DB persist (fire-and-forget) — explicit id + reply fields
+    if let Some(s) = &state.session {
         let at   = s.access_token.clone();
         let from = state.username.clone();
+        let id   = message_id.clone();
+        let reply_tuple = reply_ref.map(|r| (r.db_id.clone(), r.author.clone(), r.content.clone()));
         thread::spawn(move || {
-            if let Err(e) = crate::net::supabase::insert_message(&at, &from, &content, None, &Uuid::new_v4().to_string(), None) {
+            let reply_args = reply_tuple.as_ref().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str()));
+            if let Err(e) = crate::net::supabase::insert_message(&at, &from, &content, None, &id, reply_args) {
                 log::warn!("[chat] DB insert failed: {}", e);
             }
         });

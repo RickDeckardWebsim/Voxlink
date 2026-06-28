@@ -7,6 +7,14 @@ use egui::{Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, RichTex
 use crate::state::{AppState, ChatMessage, MessageKind};
 use super::theme;
 
+/// Action returned by `render_message` when the user interacts with a message.
+pub enum MessageAction {
+    /// The user clicked a reaction pill (or quick-emoji in the context menu).
+    ReactionToggle { message_id: String, emoji: String, active: bool },
+    /// The user clicked "Reply" — caller should set `reply_target` and focus the input.
+    Reply { db_id: String, author: String, content: String },
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────────────
 
 pub fn draw_avatar(ui: &mut Ui, username: &str, avatar_url: Option<&str>, size: f32) -> Rect {
@@ -80,7 +88,7 @@ pub fn render_message(
     show_header: bool,
     avatar_url: Option<&str>,
     local_username: &str,
-) -> Option<(String, String, bool)> {
+) -> Option<MessageAction> {
     match msg.kind {
         MessageKind::System => { render_system_message(ui, msg); None }
         MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username),
@@ -114,11 +122,11 @@ fn render_chat_message(
     show_header: bool,
     avatar_url: Option<&str>,
     local_username: &str,
-) -> Option<(String, String, bool)> {
+) -> Option<MessageAction> {
     ui.add_space(if show_header { 10.0 } else { 1.0 });
 
     let author_color = theme::avatar_color(&msg.author);
-    let mut toggle = None;
+    let mut action = None;
 
     ui.horizontal_top(|ui| {
         ui.add_space(12.0);
@@ -131,6 +139,14 @@ fn render_chat_message(
         }
 
         ui.vertical(|ui| {
+            // ── Reply reference (above the body) ──────────────────────────────
+            if let (Some(_to), Some(author), Some(snippet)) = (&msg.reply_to, &msg.reply_to_author, &msg.reply_to_content) {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("↪").size(11.0).color(theme::TEXT_MUTED));
+                    ui.label(RichText::new(format!("@{}: {}", author, snippet)).size(11.0).color(theme::TEXT_MUTED));
+                });
+                ui.add_space(2.0);
+            }
             if show_header {
                 ui.horizontal(|ui| {
                     ui.label(
@@ -147,14 +163,14 @@ fn render_chat_message(
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
             );
-            if let Some(ref att) = msg.attachment {
+            if let Some(att) = &msg.attachment {
                 render_attachment(ui, att);
             }
 
             // ── Reactions ────────────────────────────────────────────────────
             if !msg.reactions.is_empty() {
-                if let Some(t) = render_reactions(ui, msg, local_username) {
-                    toggle = Some(t);
+                if let Some((message_id, emoji, active)) = render_reactions(ui, msg, local_username) {
+                    action = Some(MessageAction::ReactionToggle { message_id, emoji, active });
                 }
             }
 
@@ -163,20 +179,27 @@ fn render_chat_message(
                 ui.horizontal(|ui| {
                     for emoji in QUICK_EMOJIS {
                         if ui.button(RichText::new(*emoji).size(18.0)).clicked() {
-                            if let Some(ref db_id) = msg.db_id {
+                            if let Some(db_id) = &msg.db_id {
                                 let already = msg.reactions.iter().any(|r| r.user == local_username && r.emoji == *emoji);
-                                toggle = Some((db_id.clone(), emoji.to_string(), !already));
+                                action = Some(MessageAction::ReactionToggle { message_id: db_id.clone(), emoji: emoji.to_string(), active: !already });
                             }
                         }
                     }
                 });
+                ui.separator();
+                if ui.button("Reply").clicked() {
+                    if let Some(db_id) = &msg.db_id {
+                        let snippet: String = msg.content.chars().take(100).collect();
+                        action = Some(MessageAction::Reply { db_id: db_id.clone(), author: msg.author.clone(), content: snippet });
+                    }
+                }
             });
         });
 
         ui.add_space(12.0);
     });
 
-    toggle
+    action
 }
 
 fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
@@ -269,7 +292,7 @@ fn render_reactions(ui: &mut Ui, msg: &ChatMessage, local_username: &str) -> Opt
                 .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
                 .corner_radius(CornerRadius::same(10u8));
             if ui.add(pill).clicked() {
-                if let Some(ref db_id) = msg.db_id {
+                if let Some(db_id) = &msg.db_id {
                     clicked = Some((db_id.clone(), emoji.to_string(), !reacted));
                 }
             }
