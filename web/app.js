@@ -1094,10 +1094,17 @@ function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 function highlightMentions(text) {
   let html = esc(text);
+  // Sort longest-first so "joseph" is wrapped before "jo" can corrupt it.
   const users = [...knownUsers].sort((a, b) => b.length - a.length);
   for (const user of users) {
-    const re = new RegExp('@' + escapeRegex(user) + '\\b', 'g');
-    html = html.replace(re, `<span class="mention">@${user}</span>`);
+    // The username must be escaped for both the regex (so special regex chars
+    // don't break the pattern) AND the replacement (so a malicious username
+    // like <img onerror=...> can't inject HTML). esc() produces the same
+    // encoding the text was already put through, so the regex matches
+    // the escaped text and the replacement is safe to insert as innerHTML.
+    const escUser = esc(user);
+    const re = new RegExp('@' + escapeRegex(escUser) + '\\b', 'g');
+    html = html.replace(re, `<span class="mention">@${escUser}</span>`);
   }
   return html;
 }
