@@ -783,3 +783,14 @@ html, body {
 }
 .picker-emoji { font-size: 20px; cursor: pointer; padding: 4px 6px; border-radius: 4px; }
 .picker-emoji:hover { background: #3f4147; }
+
+/* ── Replies + mentions + notification (Task 8) ─────────────────────────────── */
+.msg-reply-ref { font-size: 11px; color: var(--text-muted); margin: 2px 0 4px; border-left: 2px solid var(--separator); padding-left: 6px; }
+.reply-arrow { color: var(--text-muted); margin-right: 2px; }
+.mention { color: var(--blurple); background: rgba(88,101,242,0.15); border-radius: 3px; padding: 0 2px; }
+#reply-preview { display: none; align-items: center; gap: 6px; margin: 0 16px; padding: 6px 12px; background: var(--input-bg); font-size: 12px; color: var(--text-muted); border-radius: 8px 8px 0 0; }
+.reply-cancel { margin-left: auto; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; }
+.reply-cancel:hover { color: var(--text-primary); }
+.msg-group .reply-btn { display: none; position: absolute; top: 0; right: 8px; background: var(--elevated-bg); border: 1px solid var(--separator); border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--text-muted); }
+.msg-group:hover .reply-btn { display: inline-block; }
+.reply-btn:hover { color: var(--text-primary); }

@@ -372,6 +372,9 @@ struct DbMessage {
     attachment_url:      Option<String>,
     attachment_kind:     Option<String>,
     attachment_filename: Option<String>,
+    reply_to_id:         Option<String>,
+    reply_to_author:     Option<String>,
+    reply_to_content:    Option<String>,
     created_at:          String,
 }
 
@@ -382,11 +385,14 @@ pub fn insert_message(
     from_user: &str,
     content: &str,
     attachment: Option<&crate::state::Attachment>,
+    id: &str,
+    reply: Option<(&str, &str, &str)>, // (reply_to_id, reply_to_author, reply_to_content)
 ) -> Result<()> {
     let client  = Client::new();
     let url     = format!("{}/rest/v1/messages", contract::SUPABASE_URL);
 
     let mut body = json!({
+        "id":        id,
         "channel":   contract::DEFAULT_DB_CHANNEL,
         "from_user": from_user,
         "content":   content,
@@ -399,6 +405,11 @@ pub fn insert_message(
         body["attachment_filename"] = json!(att.filename);
     }
 
+    if let Some((to_id, to_author, to_content)) = reply {
+        body["reply_to_id"]      = json!(to_id);
+        body["reply_to_author"]  = json!(to_author);
+        body["reply_to_content"] = json!(to_content);
+    }
     let res = client.post(&url)
         .header("apikey",         contract::SUPABASE_ANON_KEY)
         .header("Authorization",  format!("Bearer {}", access_token))
@@ -422,7 +433,7 @@ pub fn fetch_recent_messages(
 ) -> Result<Vec<crate::state::ChatMessage>> {
     let client = Client::new();
     let url = format!(
-        "{}/rest/v1/messages?select=id,from_user,content,attachment_url,attachment_kind,attachment_filename,created_at&channel=eq.{}&order=created_at.desc&limit=100",
+        "{}/rest/v1/messages?select=id,from_user,content,attachment_url,attachment_kind,attachment_filename,reply_to_id,reply_to_author,reply_to_content,created_at&channel=eq.{}&order=created_at.desc&limit=100",
         contract::SUPABASE_URL,
         contract::DEFAULT_DB_CHANNEL
     );
@@ -466,6 +477,9 @@ pub fn fetch_recent_messages(
             unix_ts:    0, // History messages never expire
             reactions:  Vec::new(),       // hydrated by fetch_reactions on connect
             db_id:      Some(row.id),     // DB UUID for reaction FKs
+            reply_to:         row.reply_to_id,
+            reply_to_author:  row.reply_to_author,
+            reply_to_content: row.reply_to_content,
         }
     }).collect();
 

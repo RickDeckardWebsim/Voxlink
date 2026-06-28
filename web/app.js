@@ -79,6 +79,9 @@ let inspectedUser = null;
 const typingUsers = {};  // username → last-ping timestamp
 let lastTypingPing = 0;
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+let pendingReply = null;              // { dbId, author, content } when composing a reply
+let knownUsers = new Set();           // usernames online — used for @mention highlighting
+let notificationAudio = null;
 
 // ── DOM shortcuts ─────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -179,7 +182,7 @@ function bindEvents() {
   $('inspect-close-btn').addEventListener('click', closeInspectPanel);
 
   // Close inspect on ESC or click outside
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeInspectPanel(); closeProfileModal(); } });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeInspectPanel(); closeProfileModal(); pendingReply = null; hideReplyPreview(); } });
   document.addEventListener('click', e => {
     if ($('inspect-card').style.display === 'none') return;
     if ($('inspect-card').contains(e.target)) return;
@@ -266,6 +269,7 @@ async function handleLogout() {
 async function enterChat(session) {
   myUserId = session.user.id;
   await loadProfile();
+  knownUsers = new Set([myUsername]);   // reset + seed own name for @mention highlighting
   renderProfileBar();
   showScreen('chat-screen');
   connectSignaling();
@@ -293,6 +297,7 @@ async function cleanup() {
   Object.keys(peerConns).forEach(k => delete peerConns[k]);
   Object.keys(peers).forEach(k => delete peers[k]);
   respondedTo.clear();
+  knownUsers = new Set();
 }
 
 // ── Inspect panel ─────────────────────────────────────────────────────────────
@@ -452,6 +457,7 @@ async function onPeerJoin({ from, avatar_url, description }) {
     inVoice:     peers[from]?.inVoice    ?? false,
     isSpeaking:  peers[from]?.isSpeaking ?? false,
   };
+  knownUsers.add(from);
 
   if (isNew) sysMsg(`${from} joined the room.`);
 
@@ -468,6 +474,7 @@ async function onPeerJoin({ from, avatar_url, description }) {
 function onPeerLeave({ from }) {
   if (!from || from === myUsername) return;
   delete peers[from];
+  knownUsers.delete(from);
   respondedTo.delete(from);
   if (peerConns[from]) { peerConns[from].close(); delete peerConns[from]; }
   removeAudio(from);
@@ -477,14 +484,18 @@ function onPeerLeave({ from }) {
   renderVoiceParticipants();
 }
 
-function onChatMessage({ from, content }) {
+function onChatMessage({ from, content, message_id, reply_to, reply_to_author, reply_to_content }) {
   if (!from || !content) return;
-  appendMsg(from, content);
+  const reply = reply_to ? { reply_to, reply_to_author, reply_to_content } : null;
+  appendMsg(from, content, new Date(), true, null, message_id || null, reply);
+  if (content.includes(`@${myUsername}`)) playNotification();
 }
 
-function onChatMedia({ from, content, url, kind, filename }) {
+function onChatMedia({ from, content, url, kind, filename, message_id, reply_to, reply_to_author, reply_to_content }) {
   if (!from || !url) return;
-  appendMsg(from, content || '', new Date(), true, { url, kind: kind || 'image', filename: filename || 'attachment' });
+  const reply = reply_to ? { reply_to, reply_to_author, reply_to_content } : null;
+  appendMsg(from, content || '', new Date(), true, { url, kind: kind || 'image', filename: filename || 'attachment' }, message_id || null, reply);
+  if ((content || '').includes(`@${myUsername}`)) playNotification();
 }
 
 function onVoiceState({ from, speaking, muted, in_voice }) {
@@ -502,7 +513,7 @@ function onProfileUpdate({ from, new_username, avatar_url, description }) {
   if (!old) return;
   const target = new_username ?? from;
   peers[target] = { ...old, avatarUrl: avatar_url ?? old.avatarUrl, description: description ?? old.description };
-  if (target !== from) delete peers[from];
+  if (target !== from) { delete peers[from]; knownUsers.delete(from); knownUsers.add(target); }
   if (inspectedUser === from && target !== from) closeInspectPanel();
   renderMembers();
 }
@@ -777,7 +788,7 @@ function startSpeakingDetection() {
 async function fetchHistory() {
   const { data } = await sb
     .from('messages')
-    .select('id, from_user, content, attachment_url, attachment_kind, attachment_filename, created_at')
+    .select('id, from_user, content, attachment_url, attachment_kind, attachment_filename, reply_to_id, reply_to_author, reply_to_content, created_at')
     .eq('channel', DEFAULT_DB_CHANNEL)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -791,7 +802,8 @@ async function fetchHistory() {
     const att = row.attachment_url
       ? { url: row.attachment_url, kind: row.attachment_kind || 'image', filename: row.attachment_filename || 'attachment' }
       : null;
-    appendMsg(row.from_user, row.content || '', new Date(row.created_at), false, att, row.id);
+    const reply = row.reply_to_id ? { reply_to: row.reply_to_id, reply_to_author: row.reply_to_author, reply_to_content: row.reply_to_content } : null;
+    appendMsg(row.from_user, row.content || '', new Date(row.created_at), false, att, row.id, reply);
   }
 
   const ids = data.map(r => r.id).filter(Boolean);
@@ -816,11 +828,21 @@ async function trySend() {
   $('input-placeholder').style.display = '';
   bcast(EVENTS.TYPING, { from: myUsername, is_typing: false });
 
-  bcast(EVENTS.CHAT_MESSAGE, { from: myUsername, content });
-  appendMsg(myUsername, content);
+  const messageId = crypto.randomUUID();
+  const reply = pendingReply ? {
+    reply_to: pendingReply.dbId, reply_to_author: pendingReply.author, reply_to_content: pendingReply.content,
+  } : {};
 
-  const { error } = await sb.from('messages').insert({ from_user: myUsername, content, channel: DEFAULT_DB_CHANNEL });
+  bcast(EVENTS.CHAT_MESSAGE, { from: myUsername, content, message_id: messageId, ...reply });
+  appendMsg(myUsername, content, new Date(), true, null, messageId, reply.reply_to ? reply : null);
+
+  const { error } = await sb.from('messages').insert({
+    id: messageId, from_user: myUsername, content, channel: DEFAULT_DB_CHANNEL,
+    ...(reply.reply_to ? { reply_to_id: reply.reply_to, reply_to_author: reply.reply_to_author, reply_to_content: reply.reply_to_content } : {}),
+  });
   if (error) sysMsg(`⚠ Message not saved to history: ${error.message}`);
+  pendingReply = null;
+  hideReplyPreview();
 }
 
 async function uploadMedia(file) {
@@ -844,19 +866,27 @@ async function uploadMedia(file) {
   $('message-input').textContent = '';
   $('input-placeholder').style.display = '';
 
-  appendMsg(myUsername, caption, new Date(), true, { url, kind, filename });
-  await bcast(EVENTS.CHAT_MEDIA, { from: myUsername, content: caption, url, kind, filename });
+  const messageId = crypto.randomUUID();
+  const reply = pendingReply ? {
+    reply_to: pendingReply.dbId, reply_to_author: pendingReply.author, reply_to_content: pendingReply.content,
+  } : {};
+
+  appendMsg(myUsername, caption, new Date(), true, { url, kind, filename }, messageId, reply.reply_to ? reply : null);
+  await bcast(EVENTS.CHAT_MEDIA, { from: myUsername, content: caption, url, kind, filename, message_id: messageId, ...reply });
 
   const { error: insertErr } = await sb.from('messages').insert({
-    from_user: myUsername, content: caption, channel: DEFAULT_DB_CHANNEL,
+    id: messageId, from_user: myUsername, content: caption, channel: DEFAULT_DB_CHANNEL,
     attachment_url: url, attachment_kind: kind, attachment_filename: filename,
+    ...(reply.reply_to ? { reply_to_id: reply.reply_to, reply_to_author: reply.reply_to_author, reply_to_content: reply.reply_to_content } : {}),
   });
   if (insertErr) sysMsg(`⚠ Media not saved to history: ${insertErr.message}`);
+  pendingReply = null;
+  hideReplyPreview();
 }
 
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
-function appendMsg(from, content, ts = new Date(), scroll = true, attachment = null, dbId = null) {
+function appendMsg(from, content, ts = new Date(), scroll = true, attachment = null, dbId = null, reply = null) {
   const container  = $('messages');
   const showHeader = from !== lastMsgAuthor;
   lastMsgAuthor    = from;
@@ -894,6 +924,26 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
     header.className = 'msg-header';
     header.innerHTML = `<span class="msg-author" style="color:${color}">${esc(from)}</span><span class="msg-time">${fmtTime(ts)}</span>`;
     group.appendChild(header);
+    if (reply) {
+      const refEl = document.createElement('div');
+      refEl.className = 'msg-reply-ref';
+      refEl.innerHTML = `<span class="reply-arrow">↪</span> @${esc(reply.reply_to_author)}: ${esc(reply.reply_to_content)}`;
+      group.appendChild(refEl);
+    }
+
+    // Hover Reply affordance — only when we have a dbId to reference
+    if (dbId) {
+      const replyBtn = document.createElement('button');
+      replyBtn.className = 'reply-btn';
+      replyBtn.type = 'button';
+      replyBtn.textContent = 'Reply';
+      replyBtn.onclick = ev => {
+        ev.stopPropagation();
+        pendingReply = { dbId: group.dataset.msgId, author: from, content: (content || '').slice(0, 100) };
+        showReplyPreview();
+      };
+      group.appendChild(replyBtn);
+    }
 
     container.appendChild(group);
     target = group;
@@ -904,7 +954,7 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
   if (content) {
     const div = document.createElement('div');
     div.className   = 'msg-content';
-    div.textContent = content;
+    div.innerHTML = highlightMentions(content);
     target.appendChild(div);
   }
 
@@ -929,6 +979,42 @@ function appendMsg(from, content, ts = new Date(), scroll = true, attachment = n
   }
   if (scroll) scrollBottom();
 }
+
+// ── Reply + mention + notification helpers ────────────────────────────────────
+
+// Wrap @<knownUsername> in a highlight span. HTML-escaped first, so the
+// injected <span> markup is the only unescaped text in the result.
+function highlightMentions(text) {
+  let html = esc(text);
+  for (const user of knownUsers) {
+    const mention = `@${user}`;
+    html = html.split(mention).join(`<span class="mention">${mention}</span>`);
+  }
+  return html;
+}
+
+function showReplyPreview() {
+  if (!pendingReply) return;
+  const bar = $('reply-preview');
+  if (!bar) return;
+  bar.innerHTML = `<span class="reply-arrow">↪</span> Replying to @${esc(pendingReply.author)}: ${esc(pendingReply.content)} <button class="reply-cancel" type="button">✕</button>`;
+  bar.style.display = 'flex';
+  bar.querySelector('.reply-cancel').onclick = () => { pendingReply = null; hideReplyPreview(); };
+}
+
+function hideReplyPreview() {
+  const bar = $('reply-preview');
+  if (bar) bar.style.display = 'none';
+}
+
+function playNotification() {
+  if (!notificationAudio) notificationAudio = new Audio('notification.mp3');
+  notificationAudio.currentTime = 0;
+  notificationAudio.play().catch(() => {}); // autoplay blocks until a user gesture
+}
+
+// Browsers gate audio playback behind a user gesture; unlock on first interaction.
+document.addEventListener('pointerdown', () => { playNotification(); }, { once: true });
 
 function sysMsg(text) { appendMsg('__system', text); }
 

@@ -9,6 +9,8 @@ export const SUPABASE_ANON_KEY = 'sb_publishable_VK3kO0lX4tTsrHlCsH6JFQ_ebB6_lMH
 export const SIGNALING_CHANNEL = 'p2p-signaling';
 export const DEFAULT_DB_CHANNEL = 'general';
 // Realtime broadcast event names. Canonical wire strings (spec §4).
+// chat_message and chat_media payloads now carry message_id and
+// reply_to / reply_to_author / reply_to_content (spec §4.2/§4.3/§4.9).
 // `peer_leave` is receive-only today (spec §8); included for completeness.
 export const EVENTS = Object.freeze({
   PEER_JOIN:      'peer_join',

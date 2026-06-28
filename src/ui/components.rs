@@ -7,6 +7,14 @@ use egui::{Color32, CornerRadius, FontId, Painter, Pos2, Rect, Response, RichTex
 use crate::state::{AppState, ChatMessage, MessageKind};
 use super::theme;
 
+/// Action returned by `render_message` when the user interacts with a message.
+pub enum MessageAction {
+    /// The user clicked a reaction pill (or quick-emoji in the context menu).
+    ReactionToggle { message_id: String, emoji: String, active: bool },
+    /// The user clicked "Reply" — caller should set `reply_target` and focus the input.
+    Reply { db_id: String, author: String, content: String },
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────────────
 
 pub fn draw_avatar(ui: &mut Ui, username: &str, avatar_url: Option<&str>, size: f32) -> Rect {
@@ -80,10 +88,11 @@ pub fn render_message(
     show_header: bool,
     avatar_url: Option<&str>,
     local_username: &str,
-) -> Option<(String, String, bool)> {
+    known_users: &[String],
+) -> Option<MessageAction> {
     match msg.kind {
         MessageKind::System => { render_system_message(ui, msg); None }
-        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username),
+        MessageKind::Own | MessageKind::Peer => render_chat_message(ui, msg, show_header, avatar_url, local_username, known_users),
     }
 }
 
@@ -107,18 +116,18 @@ fn render_system_message(ui: &mut Ui, msg: &ChatMessage) {
     });
     ui.add_space(4.0);
 }
-
 fn render_chat_message(
     ui: &mut Ui,
     msg: &ChatMessage,
     show_header: bool,
     avatar_url: Option<&str>,
     local_username: &str,
-) -> Option<(String, String, bool)> {
+    known_users: &[String],
+) -> Option<MessageAction> {
     ui.add_space(if show_header { 10.0 } else { 1.0 });
 
     let author_color = theme::avatar_color(&msg.author);
-    let mut toggle = None;
+    let mut action = None;
 
     ui.horizontal_top(|ui| {
         ui.add_space(12.0);
@@ -131,6 +140,14 @@ fn render_chat_message(
         }
 
         ui.vertical(|ui| {
+            // ── Reply reference (above the body) ──────────────────────────────
+            if let (Some(_to), Some(author), Some(snippet)) = (&msg.reply_to, &msg.reply_to_author, &msg.reply_to_content) {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("↪").size(11.0).color(theme::TEXT_MUTED));
+                    ui.label(RichText::new(format!("@{}: {}", author, snippet)).size(11.0).color(theme::TEXT_MUTED));
+                });
+                ui.add_space(2.0);
+            }
             if show_header {
                 ui.horizontal(|ui| {
                     ui.label(
@@ -141,20 +158,30 @@ fn render_chat_message(
                     );
                 });
             }
-            let content_resp = ui.add(
-                egui::Label::new(
-                    RichText::new(&msg.content).size(14.0).color(theme::TEXT_PRIMARY),
-                )
-                .wrap_mode(egui::TextWrapMode::Wrap),
-            );
-            if let Some(ref att) = msg.attachment {
+            // ── Content with @mention highlighting ───────────────────────────
+            // Split content into plain-text and mention segments. A `@<token>`
+            // is a mention iff <token> matches a known user (self or a peer);
+            // unmatched `@foo` renders as plain text. Mentions are styled in
+            // theme::BLURPLE; plain text in theme::TEXT_PRIMARY.
+            let segments = split_mentions(&msg.content, known_users);
+            let content_resp = ui.horizontal_wrapped(|ui| {
+                for (text, is_mention) in segments {
+                    let color = if is_mention { theme::BLURPLE } else { theme::TEXT_PRIMARY };
+                    ui.add(
+                        egui::Label::new(RichText::new(text).size(14.0).color(color))
+                            .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
+                }
+            })
+            .response;
+            if let Some(att) = &msg.attachment {
                 render_attachment(ui, att);
             }
 
             // ── Reactions ────────────────────────────────────────────────────
             if !msg.reactions.is_empty() {
-                if let Some(t) = render_reactions(ui, msg, local_username) {
-                    toggle = Some(t);
+                if let Some((message_id, emoji, active)) = render_reactions(ui, msg, local_username) {
+                    action = Some(MessageAction::ReactionToggle { message_id, emoji, active });
                 }
             }
 
@@ -163,20 +190,92 @@ fn render_chat_message(
                 ui.horizontal(|ui| {
                     for emoji in QUICK_EMOJIS {
                         if ui.button(RichText::new(*emoji).size(18.0)).clicked() {
-                            if let Some(ref db_id) = msg.db_id {
+                            if let Some(db_id) = &msg.db_id {
                                 let already = msg.reactions.iter().any(|r| r.user == local_username && r.emoji == *emoji);
-                                toggle = Some((db_id.clone(), emoji.to_string(), !already));
+                                action = Some(MessageAction::ReactionToggle { message_id: db_id.clone(), emoji: emoji.to_string(), active: !already });
                             }
                         }
                     }
                 });
+                ui.separator();
+                if ui.button("Reply").clicked() {
+                    if let Some(db_id) = &msg.db_id {
+                        let snippet: String = msg.content.chars().take(100).collect();
+                        action = Some(MessageAction::Reply { db_id: db_id.clone(), author: msg.author.clone(), content: snippet });
+                    }
+                }
             });
         });
 
         ui.add_space(12.0);
     });
 
-    toggle
+    action
+}
+
+/// Split message content into `(text, is_mention)` segments for highlighting.
+///
+/// A `@<token>` is a mention iff:
+///   • the `@` is at the start of the content or preceded by a word boundary
+///     (whitespace or non-alphanumeric), and
+///   • `<token>` (the maximal run of username chars `[A-Za-z0-9_.\-]`) exactly
+///     equals a known username.
+/// Unmatched `@foo` (no known user) and everything else renders as plain text.
+fn split_mentions(content: &str, known_users: &[String]) -> Vec<(String, bool)> {
+    // Lookup set of known usernames for O(1) exact membership.
+    let known: std::collections::HashSet<&str> =
+        known_users.iter().map(|s| s.as_str()).collect();
+
+    let is_token_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-';
+
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    let mut plain = String::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        if chars[i] == '@' {
+            // Word-boundary check: @ must start the content or follow a
+            // non-alphanumeric, non-token char (e.g. whitespace, punctuation).
+            let at_boundary = i == 0 || !is_token_char(chars[i - 1]);
+            if at_boundary {
+                // Read the maximal token after '@'.
+                let start = i + 1;
+                let mut end = start;
+                while end < n && is_token_char(chars[end]) {
+                    end += 1;
+                }
+                if end > start {
+                    let token: String = chars[start..end].iter().collect();
+                    if known.contains(token.as_str()) {
+                        // Flush accumulated plain text first.
+                        if !plain.is_empty() {
+                            segments.push((std::mem::take(&mut plain), false));
+                        }
+                        // Emit the mention (include the '@').
+                        segments.push((format!("@{}", token), true));
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+        }
+        plain.push(chars[i]);
+        i += 1;
+    }
+
+    if !plain.is_empty() {
+        segments.push((plain, false));
+    }
+
+    // If nothing was produced (e.g. empty content), return one empty plain
+    // segment so the content row still lays out correctly.
+    if segments.is_empty() {
+        segments.push((String::new(), false));
+    }
+
+    segments
 }
 
 fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
@@ -269,7 +368,7 @@ fn render_reactions(ui: &mut Ui, msg: &ChatMessage, local_username: &str) -> Opt
                 .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
                 .corner_radius(CornerRadius::same(10u8));
             if ui.add(pill).clicked() {
-                if let Some(ref db_id) = msg.db_id {
+                if let Some(db_id) = &msg.db_id {
                     clicked = Some((db_id.clone(), emoji.to_string(), !reacted));
                 }
             }

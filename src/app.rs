@@ -269,8 +269,17 @@ impl AppState {
                 self.push_system(format!("{} left the room.", username));
             }
 
-            NetEvent::MessageReceived { from, content, attachment } => {
-                self.push_peer_media(from, content, attachment);
+            NetEvent::MessageReceived { from, content, attachment, message_id, reply_to, reply_to_author, reply_to_content } => {
+                // Mention ping: if the message content contains @<local username>, play a sound.
+                let mention = format!("@{}", self.username);
+                if content.contains(&mention) {
+                    crate::audio::notification::play_notification();
+                }
+                let reply = match (reply_to, reply_to_author, reply_to_content) {
+                    (Some(to), Some(author), Some(c)) => Some((to, author, c)),
+                    _ => None,
+                };
+                self.push_peer_media(from, content, attachment, message_id, reply);
             }
 
             NetEvent::Error(msg) => {

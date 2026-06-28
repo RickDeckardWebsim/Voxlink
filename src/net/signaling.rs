@@ -15,8 +15,11 @@ pub enum SigCmd {
     SendOffer { to: String, sdp: String },
     SendAnswer { to: String, sdp: String },
     BroadcastPeerJoin { avatar_url: Option<String>, description: Option<String> },
-    BroadcastMessage(String),
-    BroadcastMedia { caption: String, url: String, kind: String, filename: String },
+    BroadcastMessage { content: String, message_id: String, reply: Option<(String, String, String)> },
+    BroadcastMedia {
+        caption: String, url: String, kind: String, filename: String,
+        message_id: String, reply: Option<(String, String, String)>,
+    },
     /// Broadcast this user's microphone/voice state to all peers.
     BroadcastVoiceState { speaking: bool, muted: bool, in_voice: bool },
     /// Broadcast a display-name / avatar change so peers can update their peer list in real time.
@@ -166,23 +169,37 @@ async fn connect_and_run(
                             }), &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
-                        SigCmd::BroadcastMessage(content) => {
+                        SigCmd::BroadcastMessage { content, message_id, reply } => {
                             let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
-                            let broadcast = make_broadcast(&topic, crate::net::contract::event::CHAT_MESSAGE, json!({
-                                "from": username,
-                                "content": content,
-                            }), &mut ref_count);
+                            let mut payload = json!({
+                                "from":        username,
+                                "content":     content,
+                                "message_id":  message_id,
+                            });
+                            if let Some((to, author, snippet)) = reply {
+                                payload["reply_to"]         = json!(to);
+                                payload["reply_to_author"]  = json!(author);
+                                payload["reply_to_content"] = json!(snippet);
+                            }
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::CHAT_MESSAGE, payload, &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
-                        SigCmd::BroadcastMedia { caption, url, kind, filename } => {
+                        SigCmd::BroadcastMedia { caption, url, kind, filename, message_id, reply } => {
                             let topic = crate::net::contract::SIGNALING_TOPIC.to_string();
-                            let broadcast = make_broadcast(&topic, crate::net::contract::event::CHAT_MEDIA, json!({
-                                "from": username,
-                                "content": caption,
-                                "url": url,
-                                "kind": kind,
-                                "filename": filename,
-                            }), &mut ref_count);
+                            let mut payload = json!({
+                                "from":        username,
+                                "content":     caption,
+                                "url":         url,
+                                "kind":        kind,
+                                "filename":    filename,
+                                "message_id":  message_id,
+                            });
+                            if let Some((to, author, snippet)) = reply {
+                                payload["reply_to"]         = json!(to);
+                                payload["reply_to_author"]  = json!(author);
+                                payload["reply_to_content"] = json!(snippet);
+                            }
+                            let broadcast = make_broadcast(&topic, crate::net::contract::event::CHAT_MEDIA, payload, &mut ref_count);
                             send_text(&mut ws_stream, &broadcast).await?;
                         }
                         SigCmd::BroadcastVoiceState { speaking, muted, in_voice } => {
@@ -281,10 +298,22 @@ fn handle_incoming(
                 }
                 crate::net::contract::event::CHAT_MESSAGE => {
                     if let Some(content) = b_payload["content"].as_str() {
+                        let message_id = b_payload["message_id"].as_str().unwrap_or("").to_string();
+                        let reply_to         = b_payload["reply_to"].as_str().map(str::to_owned);
+                        let reply_to_author  = b_payload["reply_to_author"].as_str().map(str::to_owned);
+                        let reply_to_content = b_payload["reply_to_content"].as_str().map(str::to_owned);
+                        let reply = match (reply_to, reply_to_author, reply_to_content) {
+                            (Some(to), Some(a), Some(c)) => Some((to, a, c)),
+                            _ => None,
+                        };
                         let _ = net_tx.send(NetEvent::MessageReceived {
                             from: from.to_string(),
                             content: content.to_string(),
                             attachment: None,
+                            message_id,
+                            reply_to:         reply.as_ref().map(|r| r.0.clone()),
+                            reply_to_author:  reply.as_ref().map(|r| r.1.clone()),
+                            reply_to_content: reply.as_ref().map(|r| r.2.clone()),
                         });
                         ctx.request_repaint();
                     }
@@ -319,6 +348,14 @@ fn handle_incoming(
                     let url      = b_payload["url"].as_str().unwrap_or("").to_string();
                     let kind_str = b_payload["kind"].as_str().unwrap_or("image");
                     let filename = b_payload["filename"].as_str().unwrap_or("attachment").to_string();
+                    let message_id = b_payload["message_id"].as_str().unwrap_or("").to_string();
+                    let reply_to         = b_payload["reply_to"].as_str().map(str::to_owned);
+                    let reply_to_author  = b_payload["reply_to_author"].as_str().map(str::to_owned);
+                    let reply_to_content = b_payload["reply_to_content"].as_str().map(str::to_owned);
+                    let reply = match (reply_to, reply_to_author, reply_to_content) {
+                        (Some(to), Some(a), Some(c)) => Some((to, a, c)),
+                        _ => None,
+                    };
 
                     let kind = crate::state::AttachmentKind::from_str(kind_str);
                     let attachment = if url.is_empty() { None } else {
@@ -328,6 +365,10 @@ fn handle_incoming(
                         from: from.to_string(),
                         content,
                         attachment,
+                        message_id,
+                        reply_to:         reply.as_ref().map(|r| r.0.clone()),
+                        reply_to_author:  reply.as_ref().map(|r| r.1.clone()),
+                        reply_to_content: reply.as_ref().map(|r| r.2.clone()),
                     });
                     ctx.request_repaint();
                 }

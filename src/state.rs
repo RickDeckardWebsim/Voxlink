@@ -170,6 +170,15 @@ pub struct ChatMessage {
     /// and for live-sent messages until sync (Phase 1 limitation).
     #[serde(default)]
     pub db_id: Option<String>,
+    /// DB UUID of the message this is replying to (None = not a reply).
+    #[serde(default)]
+    pub reply_to: Option<String>,
+    /// Denormalized author of the parent message (for rendering without a join).
+    #[serde(default)]
+    pub reply_to_author: Option<String>,
+    /// Denormalized snippet of the parent message's content (≤100 chars).
+    #[serde(default)]
+    pub reply_to_content: Option<String>,
 }
 
 impl ChatMessage {
@@ -189,6 +198,9 @@ impl ChatMessage {
             unix_ts: 0,
             reactions: Vec::new(),
             db_id: None,
+            reply_to: None,
+            reply_to_author: None,
+            reply_to_content: None,
         }
     }
 
@@ -208,6 +220,9 @@ impl ChatMessage {
             unix_ts: 0,
             reactions: Vec::new(),
             db_id: None,
+            reply_to: None,
+            reply_to_author: None,
+            reply_to_content: None,
         }
     }
 
@@ -222,8 +237,20 @@ impl ChatMessage {
             unix_ts: unix_now(),
             reactions: Vec::new(),
             db_id: None,
+            reply_to: None,
+            reply_to_author: None,
+            reply_to_content: None,
         }
     }
+}
+
+/// In-progress reply being composed (set when the user clicks "Reply" on a message).
+/// `content` is truncated to 100 chars at capture time for the denormalized snippet.
+#[derive(Debug, Clone)]
+pub struct ReplyTarget {
+    pub db_id: String,
+    pub author: String,
+    pub content: String,
 }
 
 /// Unix epoch seconds — used for system-message age checks.
@@ -307,7 +334,15 @@ pub enum NetEvent {
     /// A peer disconnected.
     PeerLeft(String),
     /// A text or media message was received from a peer.
-    MessageReceived { from: String, content: String, attachment: Option<Attachment> },
+    MessageReceived {
+        from: String,
+        content: String,
+        attachment: Option<Attachment>,
+        message_id: String,
+        reply_to: Option<String>,
+        reply_to_author: Option<String>,
+        reply_to_content: Option<String>,
+    },
     /// Successfully connected to the signaling server.
     Connected,
     /// Connection to the signaling server was lost.
@@ -329,8 +364,8 @@ pub enum NetEvent {
 #[allow(dead_code)]
 pub enum UiCommand {
     Connect { username: String },
-    SendMessage(String),
-    SendMedia { caption: String, url: String, kind: AttachmentKind, filename: String },
+    SendMessage { content: String, message_id: String, reply: Option<ReplyTarget> },
+    SendMedia { caption: String, url: String, kind: AttachmentKind, filename: String, message_id: String, reply: Option<ReplyTarget> },
     /// Join (true) or leave (false) the voice channel.
     ToggleVoice(bool),
     /// Mute (true) or unmute (false) the local microphone while remaining in voice.
@@ -432,6 +467,9 @@ pub struct AppState {
     pub typing_users: Vec<String>,
     /// Timestamp of the last outgoing typing ping (throttle: 1 ping / 3s).
     pub last_typing_ping: std::time::Instant,
+    /// The message currently being replied to (None = normal compose). Set by the
+    /// "Reply" context-menu action; cleared on send or ESC.
+    pub reply_target: Option<ReplyTarget>,
 
     // ── Voice ──
     pub voice_active: bool,
@@ -519,6 +557,7 @@ impl Default for AppState {
             scroll_to_bottom: false,
             typing_users: Vec::new(),
             last_typing_ping: std::time::Instant::now(),
+            reply_target: None,
             voice_active: false,
             is_muted: false,
             is_speaking: false,
@@ -548,18 +587,29 @@ impl AppState {
     }
 
     pub fn push_own(&mut self, content: impl Into<String>) {
-        self.push_own_media(content, None);
+        self.push_own_media(content, None, None);
     }
 
-    pub fn push_own_media(&mut self, content: impl Into<String>, attachment: Option<Attachment>) {
+    pub fn push_own_media(
+        &mut self,
+        content: impl Into<String>,
+        attachment: Option<Attachment>,
+        reply: Option<&ReplyTarget>,
+    ) {
         let id = self.next_id();
         let author = self.username.clone();
-        self.messages.push(ChatMessage::new_own(author, content, id, attachment));
+        let mut msg = ChatMessage::new_own(author, content, id, attachment);
+        if let Some(r) = reply {
+            msg.reply_to = Some(r.db_id.clone());
+            msg.reply_to_author = Some(r.author.clone());
+            msg.reply_to_content = Some(r.content.clone());
+        }
+        self.messages.push(msg);
         self.scroll_to_bottom = true;
     }
 
     pub fn push_peer(&mut self, author: impl Into<String>, content: impl Into<String>) {
-        self.push_peer_media(author, content, None);
+        self.push_peer_media(author, content, None, String::new(), None);
     }
 
     pub fn push_peer_media(
@@ -567,9 +617,18 @@ impl AppState {
         author: impl Into<String>,
         content: impl Into<String>,
         attachment: Option<Attachment>,
+        message_id: String,
+        reply: Option<(String, String, String)>, // (reply_to, reply_to_author, reply_to_content)
     ) {
         let id = self.next_id();
-        self.messages.push(ChatMessage::new_peer(author, content, id, attachment));
+        let mut msg = ChatMessage::new_peer(author, content, id, attachment);
+        msg.db_id = Some(message_id);
+        if let Some((to, author, content)) = reply {
+            msg.reply_to = Some(to);
+            msg.reply_to_author = Some(author);
+            msg.reply_to_content = Some(content);
+        }
+        self.messages.push(msg);
         self.scroll_to_bottom = true;
     }
 
