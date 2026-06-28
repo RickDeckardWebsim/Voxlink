@@ -10,7 +10,6 @@
 use serde::{Deserialize, Serialize};
 use directories::ProjectDirs;
 use std::fs;
-use std::path::PathBuf;
 
 // ── ThemeOverride ─────────────────────────────────────────────────────────────
 
@@ -602,10 +601,6 @@ impl AppState {
         self.scroll_to_bottom = true;
     }
 
-    pub fn push_own(&mut self, content: impl Into<String>) {
-        self.push_own_media(content, None, None);
-    }
-
     pub fn push_own_media(
         &mut self,
         content: impl Into<String>,
@@ -624,9 +619,6 @@ impl AppState {
         self.scroll_to_bottom = true;
     }
 
-    pub fn push_peer(&mut self, author: impl Into<String>, content: impl Into<String>) {
-        self.push_peer_media(author, content, None, String::new(), None);
-    }
 
     pub fn push_peer_media(
         &mut self,
