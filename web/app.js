@@ -187,6 +187,23 @@ function bindEvents() {
     closeInspectPanel();
   });
 
+  // Hamburger menu (mobile only — button is display:none on desktop)
+  const hamburger = $('hamburger-btn');
+  if (hamburger) {
+    hamburger.addEventListener('click', e => {
+      e.stopPropagation();
+      $('sidebar').classList.toggle('open');
+      $('sidebar-backdrop').classList.toggle('show');
+    });
+  }
+  const backdrop = $('sidebar-backdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', () => {
+      $('sidebar').classList.remove('open');
+      backdrop.classList.remove('show');
+    });
+  }
+
   // Announce departure when the tab/window closes. navigator.sendBeacon is
   // not usable for Realtime broadcasts (it needs the SDK channel), so we fire
   // a best-effort async broadcast; the browser may not wait for it to finish,
@@ -584,8 +601,12 @@ function showReactionPicker(x, y, messageId, targetEl) {
     picker.className = 'reaction-picker';
     document.body.appendChild(picker);
   }
-  picker.style.left = `${x}px`;
-  picker.style.top  = `${y}px`;
+  // Clamp to viewport so the picker doesn't overflow on mobile
+  const pw = 220, ph = 48;
+  const maxX = window.innerWidth - pw - 8;
+  const maxY = window.innerHeight - ph - 8;
+  picker.style.left = `${Math.min(x, Math.max(0, maxX))}px`;
+  picker.style.top  = `${Math.min(y, Math.max(0, maxY))}px`;
   picker.style.display = 'flex';
   picker.innerHTML = '';
   for (const emoji of QUICK_EMOJIS) {
