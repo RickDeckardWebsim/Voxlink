@@ -513,7 +513,7 @@ function onProfileUpdate({ from, new_username, avatar_url, description }) {
   if (!old) return;
   const target = new_username ?? from;
   peers[target] = { ...old, avatarUrl: avatar_url ?? old.avatarUrl, description: description ?? old.description };
-  if (target !== from) delete peers[from];
+  if (target !== from) { delete peers[from]; knownUsers.delete(from); knownUsers.add(target); }
   if (inspectedUser === from && target !== from) closeInspectPanel();
   renderMembers();
 }
