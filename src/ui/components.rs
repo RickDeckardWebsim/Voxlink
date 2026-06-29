@@ -283,36 +283,12 @@ fn split_mentions(content: &str, known_users: &[String]) -> Vec<(String, bool)> 
 
 /// True if `content` contains an @mention of `username` at a word boundary.
 /// Mirrors the web `mentionsUser` regex semantics — `@jo` does NOT match
-/// `@joseph`. Uses the same token-char and boundary rules as `split_mentions`.
+/// `@joseph`. Delegates to `split_mentions` to avoid duplicating the
+/// token-walking + boundary logic.
 pub fn is_mentioned(content: &str, username: &str) -> bool {
     if username.is_empty() { return false; }
-    let is_token_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-';
-    let chars: Vec<char> = content.chars().collect();
-    let n = chars.len();
-    let target: Vec<char> = username.chars().collect();
-    let mut i = 0;
-    while i < n {
-        if chars[i] == '@' {
-            let at_boundary = i == 0 || !is_token_char(chars[i - 1]);
-            if at_boundary {
-                // Check if the token starting at i+1 exactly matches username
-                // AND is followed by a non-token char (word boundary on the right too).
-                let start = i + 1;
-                let mut end = start;
-                while end < n && is_token_char(chars[end]) {
-                    end += 1;
-                }
-                if end - start == target.len() {
-                    let token: String = chars[start..end].iter().collect();
-                    if token == username {
-                        return true;
-                    }
-                }
-            }
-        }
-        i += 1;
-    }
-    false
+    let known = vec![username.to_string()];
+    split_mentions(content, &known).iter().any(|(_, is_mention)| *is_mention)
 }
 
 fn render_attachment(ui: &mut Ui, att: &crate::state::Attachment) {
