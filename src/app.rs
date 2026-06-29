@@ -275,7 +275,7 @@ impl AppState {
                     crate::audio::notification::play_notification();
                     self.ping_toast = Some(crate::state::PingToast {
                         author: from.clone(),
-                        content: content.chars().take(120).collect(),
+                        content: content.chars().take(100).collect(),
                         set_at: std::time::Instant::now(),
                     });
                 }

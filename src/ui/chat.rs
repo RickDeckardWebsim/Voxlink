@@ -69,7 +69,7 @@ pub fn render(ctx: &egui::Context, state: &mut AppState) {
                     let (author, content) = state.reply_target.as_ref()
                         .map(|r| (r.author.clone(), r.content.clone()))
                         .unwrap_or_default();
-                    let snippet: String = content.chars().take(80).collect();
+                    let snippet: String = content.chars().take(100).collect();
                     ui.label(RichText::new(format!("↪ Replying to {}: {}", author, snippet))
                         .size(12.0)
                         .color(theme::TEXT_MUTED));

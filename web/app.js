@@ -1270,7 +1270,7 @@ function showPingToast(from, content) {
   const title = $('ping-title');
   if (title) title.textContent = `${from} mentioned you`;
   const preview = $('ping-preview');
-  if (preview) preview.textContent = content.slice(0, 120);
+  if (preview) preview.textContent = content.slice(0, 100);
   // Show with slide-in animation
   toast.classList.remove('hide');
   toast.classList.add('show');
