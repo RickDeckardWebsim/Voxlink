@@ -158,7 +158,7 @@ function bindEvents() {
     }
     // @username autocomplete — detect a partial @token at the cursor and
     // filter knownUsers against it.
-    const token = getMentionToken(input.textContent);
+    const token = getMentionToken(input);
     if (token) {
       const partial = token.partial.toLowerCase();
       const matches = [...knownUsers].filter(u => u.toLowerCase().startsWith(partial)).sort();
@@ -1143,17 +1143,35 @@ function mentionsUser(text, username) {
 
 // ── @username autocomplete dropdown ───────────────────────────────────────────
 
-// Extract the partial @mention token the user is currently typing.
-// Returns { atIdx, partial } when there's an '@' followed by zero or more
-// word chars with no whitespace after it, otherwise null.
-function getMentionToken(text) {
-  const atIdx = text.lastIndexOf('@');
+// Extract the partial @mention token the user is currently typing AT THE
+// CURSOR — not just any '@' in the full text. Uses the Selection/Range API
+// to get the cursor offset within the contenteditable div, then walks
+// backwards from there to find a '@' at a word boundary.
+// Returns { atIdx, partial } or null.
+function getMentionToken(inputEl) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !inputEl.contains(sel.anchorNode)) return null;
+  // Get all text up to the cursor.
+  const range = sel.getRangeAt(0);
+  const preRange = range.cloneRange();
+  preRange.selectNodeContents(inputEl);
+  preRange.setEnd(range.startContainer, range.startOffset);
+  const textBeforeCursor = preRange.toString();
+  // Find the last '@' before the cursor.
+  const atIdx = textBeforeCursor.lastIndexOf('@');
   if (atIdx === -1) return null;
-  const after = text.slice(atIdx + 1);
-  // A space after the '@' means it's no longer a mention in progress.
-  if (/\s/.test(after)) return null;
-  const match = after.match(/^[\w.-]*/);
-  return { atIdx, partial: match ? match[0] : '' };
+  // Check that '@' is at a word boundary (start of text or preceded by non-token char).
+  if (atIdx > 0) {
+    const prevChar = textBeforeCursor[atIdx - 1];
+    if (/[\w.-]/.test(prevChar)) return null;
+  }
+  // Extract the partial token between '@' and the cursor.
+  const partial = textBeforeCursor.slice(atIdx + 1);
+  // A space means it's no longer a mention in progress.
+  if (/\s/.test(partial)) return null;
+  // Only word chars allowed in the token.
+  if (partial && !/^[\w.-]*$/.test(partial)) return null;
+  return { atIdx, partial };
 }
 
 function showMentionDropdown(matches, inputEl) {
@@ -1171,39 +1189,53 @@ function showMentionDropdown(matches, inputEl) {
   dd._mentionMatches = matches;
   dd._mentionIndex = 0;
 }
-
-function hideMentionDropdown() {
-  const dd = $('mention-dropdown');
-  if (dd) { dd.style.display = 'none'; dd._mentionMatches = null; }
-}
-
-function moveMentionSelection(dd, delta) {
-  const items = dd.querySelectorAll('.mention-item');
-  if (!items.length) return;
-  const n = items.length;
-  let idx = (dd._mentionIndex ?? 0) + delta;
-  if (idx < 0) idx = n - 1;
-  if (idx >= n) idx = 0;
-  dd._mentionIndex = idx;
-  items.forEach((it, i) => it.classList.toggle('selected', i === idx));
-  items[idx].scrollIntoView({ block: 'nearest' });
-}
-
 function insertMention(username, inputEl) {
-  const text = inputEl.textContent;
-  const atIdx = text.lastIndexOf('@');
-  if (atIdx === -1) { hideMentionDropdown(); return; }
-  const before = text.slice(0, atIdx);
-  const after = text.slice(atIdx + 1).replace(/^[\w.-]*/, '');
-  inputEl.textContent = before + '@' + username + ' ' + after;
-  // Place the cursor right after the inserted mention + trailing space.
   const sel = window.getSelection();
-  const range = document.createRange();
-  inputEl.focus();
-  range.selectNodeContents(inputEl);
-  range.collapse(false);
+  if (!sel.rangeCount || !inputEl.contains(sel.anchorNode)) { hideMentionDropdown(); return; }
+
+  // Find the '@' at the cursor by walking the text node backwards.
+  const range = sel.getRangeAt(0);
+  const node = range.startContainer;
+  const offset = range.startOffset;
+
+  // Only handle text nodes (the contenteditable div is single-line, so the
+  // cursor is almost always in a text node).
+  if (node.nodeType !== Node.TEXT_NODE) { hideMentionDropdown(); return; }
+
+  const text = node.textContent;
+  const cursorPos = offset;
+  // Walk backwards from cursor to find '@' at a word boundary.
+  let atIdx = -1;
+  for (let i = cursorPos - 1; i >= 0; i--) {
+    if (text[i] === '@') {
+      // Check word boundary before '@'.
+      if (i === 0 || !/[\w.-]/.test(text[i - 1])) {
+        atIdx = i;
+        break;
+      }
+    }
+    // If we hit a space or non-token char, stop — the '@' is too far back.
+    if (/[\s]/.test(text[i])) break;
+  }
+  if (atIdx === -1) { hideMentionDropdown(); return; }
+
+  // Replace the '@partial' text with '@username ' by modifying the text node.
+  const before = text.slice(0, atIdx);
+  // After the '@', consume the maximal token run (the partial the user typed).
+  let tokenEnd = atIdx + 1;
+  while (tokenEnd < text.length && /[\w.-]/.test(text[tokenEnd])) tokenEnd++;
+  const after = text.slice(tokenEnd);
+  const inserted = '@' + username + ' ';
+  node.textContent = before + inserted + after;
+
+  // Place the cursor right after the inserted mention + trailing space.
+  const newOffset = before.length + inserted.length;
+  const newRange = document.createRange();
+  newRange.setStart(node, newOffset);
+  newRange.collapse(true);
   sel.removeAllRanges();
-  sel.addRange(range);
+  sel.addRange(newRange);
+
   hideMentionDropdown();
   $('input-placeholder').style.display = inputEl.textContent ? 'none' : '';
 }
